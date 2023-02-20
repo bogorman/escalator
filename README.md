@@ -1,6 +1,6 @@
 # escalator
 
-Opinionated project for Full stack Scala starter. Get up and running fast.
+Opinionated Full stack Scala starter project. Get up and running fast.
 
 - Scala 2.13
 - Laminar
