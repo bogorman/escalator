@@ -9,7 +9,7 @@ Opinionated project for Full stack Scala starter. Get up and running fast.
 - Monix
 - Generate scaffolding from DB. 
 - Flyway migrations. 
-- Optional CDRS/ES. Akka persistence with Posgtres. 
+- CQRS/ES. Akka persistence with Posgtres. 
 - Simple starter app with Login/User Registration. 
 - OAuth support
 - Twitter Streaming
