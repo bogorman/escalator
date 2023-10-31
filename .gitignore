@@ -1,0 +1,15 @@
+.DS_Store
+
+bloop/*
+project/.bloop/**
+project/project/.bloop/**
+
+.metals/**
+node_modules/**
+.project/.bloop/**
+
+target/
+project/target/
+
+
+modules/escalator/**
