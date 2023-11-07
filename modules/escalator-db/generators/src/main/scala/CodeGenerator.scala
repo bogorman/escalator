@@ -168,7 +168,10 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
 
     println("toCaseClass scalaName:" + scalaName)
 
-    val args = tableColumns.map { col =>
+    val autoColumn = tableColumns.filter { c => c.isAutoColumn }
+    val noAutoColumns = tableColumns.filter { c => !c.isAutoColumn }
+
+    val args = (noAutoColumns ++ autoColumn).map { col =>
       col.toArg(namingStrategy, name, true)
     }.mkString(", ")     
 
@@ -929,8 +932,6 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   def applyFixes(fileData: String) = {
     // TODO: fix multi key foreign key
-    // fileData
-    // fileData.replace("instrumentSymbol: ExchangeIdent","instrumentSymbol: InstrumentSymbol")
     customGen.processFileData(fileData)
   }
 
@@ -990,11 +991,6 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val sharedModels = MList.empty[String]
 
     /////////////// add the cats stuff here
-
-    // import cats.Show
-    // object ExchangeIdent {
-    //   implicit val defaultShow: Show[ExchangeIdent] = _.ident
-    // }
 
     val packageSpace = codegenOptions.packageName
 
