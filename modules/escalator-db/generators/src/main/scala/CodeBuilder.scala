@@ -6,7 +6,7 @@ object CodeBuilder {
 		// table.uniqueKeysExcludingPrimaryKey
 		val namingStrategy = GeneratorNamingStrategy
 
-		val primaryKeyClass = table.primaryKeyClass //s"${modelClass}Id"
+		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
 		val initial = modelClass.take(1).toLowerCase
 
 		val uniqueKeyCols = key.cols.map { scol =>
@@ -38,16 +38,34 @@ object CodeBuilder {
 		// val includeCreatedAt = 
 		// val includeUpdatedAt = 	
 
+		val returnClass = if (primaryKeyClass.isEmpty){
+			"Long"
+		} else {
+			primaryKeyClass.get
+		}
+
+		val returningValues = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".returningGenerated(_.id)"
+		}
+
+		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".copy(createdAt = ts, updatedAt = ts)"
+		}
+
 		s"""
-		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${primaryKeyClass}] = monitored("upsert-${monitorKey}") {
+		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-${monitorKey}") {
 		    val ts = TimeUtil.nowTimestamp()
 		    ctx.run(
 		      query[${modelClass}]
-		        .insert(lift(${initial}.copy(createdAt = ts, updatedAt = ts) ))
+		        .insert(lift(${initial}${insertUpdateTimeTracking} ))
 		        .onConflictUpdate(${conflictArgs})(
 		        	${updateArgs}
 		        )
-		        .returningGenerated(_.id)
+		        ${returningValues}
 		    ).runToFuture
 		  }
 		"""
@@ -113,10 +131,14 @@ object CodeBuilder {
 		"""
 	}	
 
-	def buildUpdateCodeById(table: Table, columns: List[Column], modelClass: String) = {
+	def buildUpdateCodeById(table: Table, columns: List[Column], modelClass: String): String = {
 		val namingStrategy = GeneratorNamingStrategy
 
-		val primaryKeyClass = table.primaryKeyClass //s"${modelClass}Id"
+		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
+		if (primaryKeyClass.isEmpty){
+			return ""
+		}
+
 		val initial = modelClass.take(1).toLowerCase
 
 		// val caseCol = namingStrategy.column(col.columnName)
@@ -135,7 +157,7 @@ object CodeBuilder {
 		}.mkString(",\n")
 
 		s"""
-		  override def update${functionName}ById(${initial}: ${primaryKeyClass}, ${functionArgs}): Future[${primaryKeyClass}] = monitored("update-${monitorKey}-by-id") {
+		  override def update${functionName}ById(${initial}: ${primaryKeyClass.get}, ${functionArgs}): Future[${primaryKeyClass.get}] = monitored("update-${monitorKey}-by-id") {
 		    val ts = TimeUtil.nowTimestamp()
 		    ctx.run(
 		      query[${modelClass}]

@@ -186,14 +186,17 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
     val requiredColumns = tableColumns.filter { c => !c.isPrimaryKey && !c.isAutoColumn }
     val autoColumns = tableColumns.filter { c => c.isAutoColumn }
 
-    val primaryKeyColumn = primaryKeyColumns(0)
+    val primaryKeyColumnOpt: Option[Column] = primaryKeyColumns.headOption
 
-    val primaryKeyColArg = primaryKeyColumn.toDefn(primaryKeyColumn.tableName, true)
-    // val primaryKeyColArg = namingStrategy.column(col.columnName)
+    val primaryKeyColArgOpt: Option[String] = primaryKeyColumnOpt.map { col => col.toDefn(col.tableName, true) }
 
     val objectArgs = requiredColumns.map { col =>
       col.toArg(namingStrategy, name, true)
     }.mkString(", ")    
+
+    val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
+    val autoInsertedAtCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"escalator.models.Timestamp(0L),").getOrElse("")
+    val autoUpdatedAtCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"escalator.models.Timestamp(0L),").getOrElse("")
 
     val objectClass = if (inheritedFromTable.isDefined){
       val inheritedRequiredColumns = requiredColumns.filter { c => c.inheritedFromColumn.isDefined }
@@ -212,10 +215,10 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
 
         def apply(${objectArgs}): ${scalaName} = {
           ${scalaName}(
-            ${primaryKeyColArg}(0L),
+            ${primaryColCreator}
             ${objClassInheritedArgsWithDefaults},
-            escalator.models.Timestamp(0L),
-            escalator.models.Timestamp(0L),
+            ${autoInsertedAtCreator}
+            ${autoUpdatedAtCreator}
             ${objClassDirectArgsWithDefaults}
           )
         }
@@ -226,14 +229,16 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
         namingStrategy.column(col.columnName)
       }.mkString(", ")  
 
+      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
+
       s"""object $scalaName {
 
         def apply(${objectArgs}): ${scalaName} = {
           ${scalaName}(
-            ${primaryKeyColArg}(0L),
+            ${primaryColCreator}
             ${objClassArgsWithDefaults},
-            escalator.models.Timestamp(0L),
-            escalator.models.Timestamp(0L)          
+            ${autoInsertedAtCreator}
+            ${autoUpdatedAtCreator} 
           )
         }
       }
@@ -307,11 +312,15 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
     }
   }
 
-  def primaryKeyClass(): String = {
+  def primaryKeyClass(): Option[String] = {
     val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey }    
-    val primaryKeyColumn = primaryKeyColumns(0)
-    val primaryKeyColArg = primaryKeyColumn.toDefn(primaryKeyColumn.tableName, true)
-    primaryKeyColArg
+    if (primaryKeyColumns.headOption.isEmpty){
+      None
+    } else {
+      val primaryKeyColumn = primaryKeyColumns(0)
+      val primaryKeyColArg = primaryKeyColumn.toDefn(primaryKeyColumn.tableName, true)
+      Some(primaryKeyColArg)
+    }
   }
 
 }

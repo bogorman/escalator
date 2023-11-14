@@ -104,7 +104,7 @@ object GeneratorTemplates {
 
 	def tableTraitTemplate(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
 		val initial = modelClass.take(1).toLowerCase
-		val primaryKeyClass = table.primaryKeyClass		//s"${modelClass}Id"
+		val primaryKeyClass: Option[String] = table.primaryKeyClass		//s"${modelClass}Id"
 
 		val includeUpsert = table.hasUniqueKeysExcludingPrimaryKey()
 
@@ -132,6 +132,22 @@ object GeneratorTemplates {
 
 		// val store = DefnBuilder.buildStoreDefn(table, packageSpace, modelClass, tableName, tableClass)
 
+		val primaryIdFuncs = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			s"""
+				def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]]
+
+				def update(${initial}: ${modelClass}): Future[_]
+
+				def upsert(${initial}: ${modelClass}): Future[${modelClass}]
+
+				def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]				
+
+				def delete(${initial}: ${modelClass}): Future[_]
+			"""
+		}
+
 		s"""
 		package ${packageSpace}.persistence.database.tables
 
@@ -150,12 +166,6 @@ object GeneratorTemplates {
 
 		  def insert(${initial}: ${modelClass}): Future[_]
 
-		  def update(${initial}: ${modelClass}): Future[_]
-
-		  def upsert(${initial}: ${modelClass}): Future[${modelClass}]
-
-		  def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]
-
 		  ${upsert}
 
 		  ${uniqueChecks}
@@ -164,9 +174,7 @@ object GeneratorTemplates {
 
 		  ${updatesByUniqueKeys}
 
-		  def delete(${initial}: ${modelClass}): Future[_]
-
-		  def getById(${initial}: ${primaryKeyClass}): Future[Option[${modelClass}]] 
+		  ${primaryIdFuncs}
 
 		  ${gettersByUniqueKeys}
 
@@ -180,7 +188,7 @@ object GeneratorTemplates {
 	def tableDaoTemplate(customGen: CustomGenerator,table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
 		// val package = ""
 		val initial = modelClass.take(1).toLowerCase
-		val primaryKeyClass = table.primaryKeyClass //s"${modelClass}Id"
+		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
 
 		println("tableDaoTemplate:" + tableName)
 		println(table.uniqueKeysExcludingPrimaryKey)
@@ -207,7 +215,109 @@ object GeneratorTemplates {
 			""
 		}
 
-    // val store = CodeBuilder.buildStoreCode(table, packageSpace, modelClass, tableName, tableClass)		
+    // val store = CodeBuilder.buildStoreCode(table, packageSpace, modelClass, tableName, tableClass)	
+    
+		val returnClass = if (primaryKeyClass.isEmpty){
+			"Long"
+		} else {
+			primaryKeyClass.get
+		}
+
+		val returningValues = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".returning(_.id)"
+		}    	
+
+		val updateTimeTracking = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".copy(updatedAt = ts)"
+		}    	
+
+		val primaryIdFuncs = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+
+			s"""
+			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = monitored("getById") {
+	            ctx.run(
+	                query[${modelClass}]
+	                  .filter(_.id == lift(${initial}))
+	                  .take(1)
+	            ).runToFuture.map(_.headOption)
+			  }
+
+			  override def update(${initial}: ${modelClass}): Future[${returnClass}] = monitored("update") {
+			  	if (${initial}.id == ${primaryKeyClass.get}(0L)) {
+			  		insert(${initial})
+			  	} else {
+			  		val ts = TimeUtil.nowTimestamp()
+			  		ctx.run(
+			  			query[${modelClass}]
+			  				.filter(_.id == lift(${initial}.id))
+			  				.update(lift(${initial}${updateTimeTracking} ))
+			  				${returningValues}
+			  		).runToFuture
+			  	}
+			  }
+
+			  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = {
+			  	if (${initial}.id == ${primaryKeyClass.get}(0L)) {
+			  		store(${initial})
+			  	} else {
+			  		val ts = TimeUtil.nowTimestamp()
+			  		ctx.run(
+			  			query[${modelClass}]
+			  				.filter(_.id == lift(${initial}.id))
+			  				.update(lift(${initial}${updateTimeTracking} ))
+			  				${returningValues}
+			  		).runToFuture.map { updatedId =>
+				    	${initial}${updateTimeTracking}
+				    }
+			  	}
+			  }		  
+
+			  override def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = {
+			  	Future.sequence(  ${initial}l.map { ${initial} => upsert(${initial}) }  )
+			  }	
+
+			  override def delete(${initial}: ${modelClass}): Future[${returnClass}] = monitored("delete") {
+			    ctx.run(
+			      query[${modelClass}]
+			      	.filter(_.id == lift(${initial}.id))
+			        .delete
+			        ${returningValues}
+			    ).runToFuture
+			  }
+
+			"""
+		}
+
+
+		val returningGeneratedValues = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".returningGenerated(_.id)"
+		}    			
+
+		val storeClassUpdate = if (primaryKeyClass.isEmpty){
+			s""".map{ rowCnt =>
+		    	toInsert
+		    }
+		    """			
+		} else {
+			s""".map{ newId =>
+		    	toInsert.copy(id = newId)
+		    }
+		    """			
+		}
+
+		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".copy(createdAt = ts, updatedAt = ts)"
+		}
 
 		s"""
 		package ${packageSpace}.persistence.postgres.tables
@@ -250,63 +360,27 @@ object GeneratorTemplates {
 		  override def store(${initial}: ${modelClass}): Future[${modelClass}] = monitored("store") {
 		  	val ts = TimeUtil.nowTimestamp()
 		  	
-		  	val toInsert = ${initial}.copy(createdAt = ts, updatedAt = ts)
+		  	val toInsert = ${initial}${insertUpdateTimeTracking}
 
 		    ctx.run(
 		      query[${modelClass}]
 		        .insert(lift(toInsert))
-		        .returningGenerated(_.id)
-		    ).runToFuture.map { newId =>
-		    	toInsert.copy(id = newId)
-		    }
+		        ${returningGeneratedValues}
+		    ).runToFuture${storeClassUpdate}
 		  }
 
 		  override def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = monitored("store") {
 		  	Future.sequence(  ${initial}l.map { ${initial} => store(${initial}) }  )
 		  }
 
-		  override def insert(${initial}: ${modelClass}): Future[${primaryKeyClass}] = monitored("insert") {
+		  override def insert(${initial}: ${modelClass}): Future[${returnClass}] = monitored("insert") {
 		  	val ts = TimeUtil.nowTimestamp()
 		    ctx.run(
 		      query[${modelClass}]
-		        .insert(lift(${initial}.copy(createdAt = ts, updatedAt = ts)))
-		        .returningGenerated(_.id)
+		        .insert(lift(${initial}${insertUpdateTimeTracking}))
+		        ${returningValues}
 		    ).runToFuture
-		  }
-
-		  override def update(${initial}: ${modelClass}): Future[${primaryKeyClass}] = monitored("update") {
-		  	if (${initial}.id == ${primaryKeyClass}(0L)) {
-		  		insert(${initial})
-		  	} else {
-		  		val ts = TimeUtil.nowTimestamp()
-		  		ctx.run(
-		  			query[${modelClass}]
-		  				.filter(_.id == lift(${initial}.id))
-		  				.update(lift(${initial}.copy(updatedAt = ts)))
-		  				.returning(_.id)
-		  		).runToFuture
-		  	}
-		  }
-
-		  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = {
-		  	if (${initial}.id == ${primaryKeyClass}(0L)) {
-		  		store(${initial})
-		  	} else {
-		  		val ts = TimeUtil.nowTimestamp()
-		  		ctx.run(
-		  			query[${modelClass}]
-		  				.filter(_.id == lift(${initial}.id))
-		  				.update(lift(${initial}.copy(updatedAt = ts)))
-		  				.returning(_.id)
-		  		).runToFuture.map { updatedId =>
-			    	${initial}.copy(updatedAt = ts)
-			    }
-		  	}
-		  }		  
-
-		  override def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = {
-		  	Future.sequence(  ${initial}l.map { ${initial} => upsert(${initial}) }  )
-		  }		  
+		  }	  
 
 		  ${upsert}
 
@@ -316,22 +390,7 @@ object GeneratorTemplates {
 
 		  ${updatesByUniqueKeys}
 
-		  override def delete(${initial}: ${modelClass}): Future[${primaryKeyClass}] = monitored("delete") {
-		    ctx.run(
-		      query[${modelClass}]
-		      	.filter(_.id == lift(${initial}.id))
-		        .delete
-		        .returning(_.id)
-		    ).runToFuture
-		  }
-
-		  override def getById(${initial}: ${primaryKeyClass}): Future[Option[${modelClass}]] = monitored("getById") {
-            ctx.run(
-                query[${modelClass}]
-                  .filter(_.id == lift(${initial}))
-                  .take(1)
-            ).runToFuture.map(_.headOption)
-		  }
+		  ${primaryIdFuncs}
 
 		  ${gettersByUniqueKeys}
 

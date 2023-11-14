@@ -28,10 +28,13 @@ object DefnBuilder {
 	}
 
 
-	def buildUpdateDefnById(table: Table, columns: List[Column], modelClass: String) = {
+	def buildUpdateDefnById(table: Table, columns: List[Column], modelClass: String): String = {
 		val namingStrategy = GeneratorNamingStrategy
 
-		val primaryKeyClass = table.primaryKeyClass	// s"${modelClass}Id"
+		val primaryKeyClass: Option[String] = table.primaryKeyClass	// s"${modelClass}Id"
+		if (primaryKeyClass.isEmpty){
+			return ""
+		}
 
 		val monitorKey = columns.map( _.columnName.toLowerCase ).mkString("-")
 
@@ -41,7 +44,7 @@ object DefnBuilder {
 		val functionArgs = columns.map( c => s"${c.toArg(namingStrategy,table.name,true,true)}" ).mkString(",")
 
 		s"""
-		  def update${functionName}ById(id: ${primaryKeyClass}, ${functionArgs}): Future[${primaryKeyClass}]
+		  def update${functionName}ById(id: ${primaryKeyClass.get}, ${functionArgs}): Future[${primaryKeyClass.get}]
 		"""
 	}
 
@@ -75,7 +78,7 @@ object DefnBuilder {
 		// val functionArgs = columns.map( c => s"${c.toArg(namingStrategy,table.name,true,true)}" ).mkString(",")
 		// , ${functionArgs}
 
-		val primaryKeyClass = table.primaryKeyClass
+		// val primaryKeyClass: Option[String] = table.primaryKeyClass
 
 		s"""
 				def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]]
