@@ -1,31 +1,20 @@
 package escalator.util
 
-object TextUtil {
+import scala.collection.mutable.{ Map => MMap }
 
+object TextUtil {
   //add a mapping here of common english words
   // or use https://github.com/atteo/evo-inflector
   // https://stackoverflow.com/questions/16961774/scala-library-for-finding-plural-of-string-and-possible-singulars-of-a-plural
 
-  //from singular to plural
-  val customMappings = Map(
-    "strategy" -> "strategies", 
-    "currency" -> "currencies", 
-    "crypto_currency" -> "crypto_currencies", 
-    "fiat_currency" -> "fiat_currencies", 
-    "spot_currency" -> "spot_currencies",
-    "asset_class" -> "asset_classes",
-    /////////
-    "CryptoCurrency" -> "CryptoCurrencies",
-    "FiatCurrency" -> "FiatCurrencies",  
-    "AssetClass" -> "AssetClasses"
-  )
+  val CUSTOM_PLURAL_MAPPINGS = MMap.empty[String,String]
 
-  def reverseCustomMappinngs() = {
-    for ((k,v) <- customMappings) yield (v, k)
+  def reverseCustomPluralMappings() = {
+    for ((k,v) <- CUSTOM_PLURAL_MAPPINGS) yield (v, k)
   }
 
   def singularize(str: String): String = {
-    val cm = reverseCustomMappinngs
+    val cm = reverseCustomPluralMappings
     val s = if (cm.contains(str)){
       cm.get(str).get
     } else {
@@ -42,7 +31,7 @@ object TextUtil {
   }
 
   def pluralize(str: String): String = {
-    val cm = customMappings
+    val cm = CUSTOM_PLURAL_MAPPINGS
     val p = if (cm.contains(str)){
       cm.get(str).get
     } else {

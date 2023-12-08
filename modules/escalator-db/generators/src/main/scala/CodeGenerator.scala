@@ -83,7 +83,7 @@ case class SimpleColumn(tableName: String, columnName: String) {
   }
 }
 
-case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column], uniqueKeys: Set[UniqueKey], isAbstract: Boolean, inheritedFromTable: Option[Table], db: Connection) {
+case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String, tableColumns: Seq[Column], uniqueKeys: Set[UniqueKey], isAbstract: Boolean, inheritedFromTable: Option[Table], db: Connection) {
   import TextUtil._
   val namingStrategy = GeneratorNamingStrategy
 
@@ -96,6 +96,18 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
     }
     caseClasses.toList
   }
+  
+
+  // def showColumnCaseClasses(): List[String] = {
+  //   val caseClasses = tableColumns.filter(_.shouldDefineType).map { col =>
+  //     // println("shouldDefineType:" + name + ":" + col.columnName + " " + col.toDefn(name, true))
+  //     // val cc = s"""case class ${col.toDefn(name, true)}(${col.toArg(namingStrategy, name, false)}) extends AnyVal"""
+  //     // println(cc)
+  //     // cc
+  //   }
+  //   caseClasses.toList
+  // }  
+
 
   // def includesColumn(colName: String): Boolean = {
   //   columns.filter(_.cols != List(SimpleColumn(name,colName))).size > 0
@@ -168,12 +180,19 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
 
     println("toCaseClass scalaName:" + scalaName)
 
-    val autoColumn = tableColumns.filter { c => c.isAutoColumn }
-    val noAutoColumns = tableColumns.filter { c => !c.isAutoColumn }
+    val autoColumn = tableColumns.filter { c => c.isAutoColumn && !c.isExtraColumn}
+    val noAutoColumns = tableColumns.filter { c => !c.isAutoColumn && !c.isExtraColumn}
+    val extraDefaultColumns = tableColumns.filter { c => c.isExtraColumn }
 
-    val args = (noAutoColumns ++ autoColumn).map { col =>
+    val primaryArgs = (noAutoColumns ++ autoColumn).map { col =>
       col.toArg(namingStrategy, name, true)
-    }.mkString(", ")     
+    }
+
+    val extraArgs = (extraDefaultColumns).map { col =>
+      col.toArg(namingStrategy, name, true) + " = None"
+    }
+
+    val args = (primaryArgs ++ extraArgs).mkString(", ")
 
     val caseClass = s"case class $scalaName($args)"
     caseClass
@@ -182,17 +201,26 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
   def mainObjectClass(): String = {
     val scalaName = namingStrategy.table(name)
 
-    val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey }
-    val requiredColumns = tableColumns.filter { c => !c.isPrimaryKey && !c.isAutoColumn }
-    val autoColumns = tableColumns.filter { c => c.isAutoColumn }
+    val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey && !c.isExtraColumn }
+    val requiredColumns = tableColumns.filter { c => !c.isPrimaryKey && !c.isAutoColumn  && !c.isExtraColumn }
+
+    val autoColumns = tableColumns.filter { c => c.isAutoColumn && !c.isExtraColumn }
+
+    val extraDefaultColumns = tableColumns.filter { c => c.isExtraColumn }
 
     val primaryKeyColumnOpt: Option[Column] = primaryKeyColumns.headOption
 
     val primaryKeyColArgOpt: Option[String] = primaryKeyColumnOpt.map { col => col.toDefn(col.tableName, true) }
 
-    val objectArgs = requiredColumns.map { col =>
+    val requiredObjectArgs = requiredColumns.map { col =>
       col.toArg(namingStrategy, name, true)
-    }.mkString(", ")    
+    }
+
+    val extraObjectArgs = extraDefaultColumns.map { col =>
+      col.toArg(namingStrategy, name, true)
+    }
+
+    val objectArgs = (requiredObjectArgs ++ extraObjectArgs).mkString(", ")     
 
     val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
     val autoInsertedAtCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"escalator.models.Timestamp(0L),").getOrElse("")
@@ -204,6 +232,11 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
       val objClassInheritedArgsWithDefaults = inheritedRequiredColumns.map { col =>
         namingStrategy.column(col.columnName)
       }.mkString(", ")  
+
+
+      val objClassExtraColsArgsWithDefaults = extraDefaultColumns.map { col =>
+        namingStrategy.column(col.columnName)
+      }.mkString(", ")         
 
       val directRequiredColumns = requiredColumns.filter { c => !c.inheritedFromColumn.isDefined }
 
@@ -219,6 +252,7 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
             ${objClassInheritedArgsWithDefaults},
             ${autoInsertedAtCreator}
             ${autoUpdatedAtCreator}
+            ${objClassExtraColsArgsWithDefaults}
             ${objClassDirectArgsWithDefaults}
           )
         }
@@ -228,6 +262,10 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
       val objClassArgsWithDefaults = requiredColumns.map { col =>
         namingStrategy.column(col.columnName)
       }.mkString(", ")  
+
+      val objClassExtraColsArgsWithDefaults = extraDefaultColumns.map { col =>
+        namingStrategy.column(col.columnName)
+      }.mkString(", ")        
 
       val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
 
@@ -239,6 +277,7 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
             ${objClassArgsWithDefaults},
             ${autoInsertedAtCreator}
             ${autoUpdatedAtCreator} 
+            ${objClassExtraColsArgsWithDefaults}
           )
         }
       }
@@ -282,7 +321,7 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
     }.toList
 
     objs.mkString("\n")
-    }
+  }
 
   def toCaseClass(): SimpleCaseClass = {
     println("toCaseClass name:" + name)
@@ -326,7 +365,8 @@ case class Table(options: CodegenOptions,name: String, tableColumns: Seq[Column]
 }
 
 
-case class Column(tableName: String,
+case class Column(customGen: CustomGenerator,
+                  tableName: String,
                   columnName: String,
                   scalaType: String,
                   nullable: Boolean,
@@ -417,6 +457,16 @@ case class Column(tableName: String,
 
   def isAutoColumn(): Boolean = {
     columnName == "created_at" || columnName == "updated_at"
+  }
+
+  def isExtraColumn(): Boolean = {
+    //make generic! and move into app a way to override
+    if (customGen == null){
+      false
+    } else {
+      customGen.useDefaultValue(tableName,columnName)
+    }
+    // tableName == "candidate_references" && (columnName == "email_result_message" || columnName == "interaction_id")
   }
 
 
@@ -560,6 +610,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     }.toSet
 
 
+    // ?????????
     val customForeignKeys = Set(
        ForeignKey(SimpleColumn("instruments","base"),SimpleColumn("assets","symbol")),
        ForeignKey(SimpleColumn("instruments","quote"),SimpleColumn("assets","symbol")),
@@ -650,6 +701,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         }        
 
         val t = Table(
+          customGen,
           options,
           name,
           mappedColumns,
@@ -707,6 +759,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
       TypeMapper.mappings(customGen).get(typ).map { scalaType =>
         Right(Column(
+          customGen,
           tableName,
           colName,
           scalaType,
@@ -917,8 +970,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     val packageSpace = packageName
 
-     val classSource = s"""
-        |package ${packageSpace}.models
+     val classSource = s"""package ${packageSpace}.models
         |
         |${GeneratorTemplates.autoGeneratedComment}        
         |
@@ -1087,6 +1139,8 @@ object CodeGenerator {
   def reset(codegenOptions: CodegenOptions,customGen: CustomGenerator): Unit = {
     println("running reset")
 
+    customGen.setup()
+
     val namingStrategy = GeneratorNamingStrategy
     val codegen = CodeGenerator(codegenOptions, namingStrategy, customGen)
 
@@ -1094,6 +1148,8 @@ object CodeGenerator {
   }
 
   def run(codegenOptions: CodegenOptions,customGen: CustomGenerator): Unit = {
+    customGen.setup()
+
     val namingStrategy = GeneratorNamingStrategy
     val codegen = CodeGenerator(codegenOptions, namingStrategy, customGen)
 

@@ -16,7 +16,10 @@ object TypeMapper {
     "bytea" -> "Array[Byte]", // PostgreSQL
     "uuid" -> "java.util.UUID", // H2, PostgreSQL
     // "json" -> "io.circe.Json", // PostgreSQL
-    "json" -> "String", 
+    // handle json properly!! use circe
+    "json" -> "io.circe.Json", 
+    "jsonb" -> "io.circe.Json", 
+    //
     "_varchar" -> "List[String]", //?????
     "Vector(_varchar)" -> "List[String]",
     "timestamp" -> "escalator.models.Timestamp" 
