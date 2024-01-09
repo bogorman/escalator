@@ -1,7 +1,7 @@
 package escalator.util.akka
 
-import akka.actor.{Actor, ActorRef, ActorRefFactory, DeadLetter, Props, UnhandledMessage}
-import akka.io.Tcp.ResumeReading
+import org.apache.pekko.actor.{Actor, ActorRef, ActorRefFactory, DeadLetter, Props, UnhandledMessage}
+import org.apache.pekko.io.Tcp.ResumeReading
 
 import escalator.util.logging.Logger
 

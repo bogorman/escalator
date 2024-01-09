@@ -150,6 +150,8 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       val caseClassName = makeUniqueKeyClassName(uk)
 
       val args = uk.cols.map { scol =>
+        println("scol: " + scol.columnName)
+
         val col = findColumn(scol.columnName)
         col.toArg(namingStrategy, name, true)
       }.mkString(", ")           
@@ -328,12 +330,17 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
     SimpleCaseClass(name,mainCaseClass(),mainObjectClass(),columnCaseClasses(),uniqueKeyCaseClasses(),extraObjects()) 
   }
 
-  def findColumn(name: String): Column = {
-    println("name: " + name)
+  def findColumn(colName: String): Column = {
+    println("colName: " + colName)
     println("columns: " + columns.map(_.columnName))
 
-    val c = columns.filter(_.columnName == name).headOption.get
-    c
+    val cOpt = columns.filter(_.columnName == colName).headOption
+
+    if (cOpt.isEmpty){
+      throw new Exception(s"Missing column ${colName} on Table ${name}(${columns.map(_.columnName).mkString(",")})")
+    }
+
+    cOpt.get
   }
 
   def findColumnOpt(name: String): Option[Column] = {
@@ -796,12 +803,12 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val typeCode = row.getShort("TYPE")
       val ordinalPosition = row.getInt("ORDINAL_POSITION")
 
-      println("indexName:" + indexName)
-      println("columnName:" + columnName)
+      println("[UK] indexName:" + indexName)
+      println("[UK] columnName:" + columnName)
 
-      println("nonUnique:" + nonUnique)
-      println("typeCode:" + typeCode)
-      println("ordinalPosition:" + ordinalPosition)
+      println("[UK] nonUnique:" + nonUnique)
+      println("[UK] typeCode:" + typeCode)
+      println("[UK] ordinalPosition:" + ordinalPosition)
 
 
       // rs.getString("INDEX_NAME") to extract index name
@@ -809,7 +816,14 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       // rs.getShort("TYPE") to extract index type
       // rs.getInt("ORDINAL_POSITION") to extract ordinal position
 
-      IndexKey(indexName, SimpleColumn(tableName,columnName))
+      //HACK FIX!
+      val fixedColName: String = if (columnName.contains("attribute_type_to_string")) {
+        columnName.replace("attribute_type_to_string(","").stripSuffix(")")
+      } else {
+        columnName
+      }
+
+      IndexKey(indexName, SimpleColumn(tableName,fixedColName))
     }.toList
 
     val validIndices = indices.filter{ i => !i.name.startsWith("inherited_") && !i.name.startsWith("ignore_") }
@@ -964,6 +978,11 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       s"implicit val codec${mt}: Codec.AsObject[${mt}] = deriveCodec[${mt}]"
     }
 
+    val customModelTypes = customGen.customTypes
+    val customModelTypeSerializers = customModelTypes.map { m =>
+      s"implicit val codec${m}: Codec.AsObject[${m}] = deriveCodec[${m}]"
+    }
+
     val modelSerializers = sharedModels.map { m =>
       s"implicit val codec${m}: Codec.AsObject[${m}] = deriveCodec[${m}]"
     }
@@ -983,6 +1002,8 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         |
         |  ${modelTypeSerializers.mkString("\n|  ")}
         |
+        |  ${customModelTypeSerializers.mkString("\n|  ")}
+        |        
         |  ${modelSerializers.mkString("\n|  ")}
         |
         |}

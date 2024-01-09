@@ -3,7 +3,7 @@ package escalator.util.resque
 // import com.redis.RedisClient
 // import redis.clients.jedis._
 
-import akka.actor._
+import org.apache.pekko.actor._
 import escalator.util.redis._
 
 class ResqueMaster(client: Dress.Wrap, queues: ResqueSet, val queuesList: List[String]) extends Actor with ActorLogging {

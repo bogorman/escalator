@@ -1,6 +1,6 @@
 package escalator.util.logging
 
-import akka.actor._
+import org.apache.pekko.actor._
 import scala.collection.mutable
 import scala.concurrent.duration._
 import scala.collection.mutable.{ LinkedHashMap ⇒ MLinkedMap }
@@ -79,7 +79,7 @@ class ActorLoggingManager(pathsToManage: List[String]) extends Actor with ActorL
 
   def broadcastLogLevels = {
     logLevels.foreach { keyVal =>
-      akka.event.Logging.levelFor(keyVal._2).foreach { logLevel =>
+      org.apache.pekko.event.Logging.levelFor(keyVal._2).foreach { logLevel =>
         // context.system.eventStream.publish(SetActorLogLevel(keyVal._1, logLevel))
         log.debug("actor:" + keyVal._1)
         log.debug("loglevel:" + keyVal._2)
@@ -102,7 +102,7 @@ class ActorLoggingManager(pathsToManage: List[String]) extends Actor with ActorL
             logLevels += (parts(0) -> parts(1))
           }
         } catch {
-          case ex: Exception ⇒ {
+          case ex: Exception => {
 
           }
         }
@@ -114,7 +114,7 @@ class ActorLoggingManager(pathsToManage: List[String]) extends Actor with ActorL
       logLevels = sortedByActorName(logLevels)
 
     } catch {
-      case ex: Exception ⇒ {
+      case ex: Exception => {
         println(Console.RED + ex.printStackTrace + Console.RESET)
       }
     } finally {
@@ -186,7 +186,7 @@ object ActorLoggingManager {
         }
       }
     } catch {
-      case ex: Exception ⇒ {
+      case ex: Exception => {
         println(Console.RED + ex.printStackTrace + Console.RESET)
       }
     } finally {

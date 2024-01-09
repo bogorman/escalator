@@ -1,7 +1,7 @@
 package escalator.util.akka.streams
 
-import akka.actor.ActorSystem
-import akka.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
 
 import escalator.util.logging.Logger
 

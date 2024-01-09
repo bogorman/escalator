@@ -4,15 +4,15 @@ import scala.concurrent.{ExecutionContext, Future, TimeoutException}
 import scala.concurrent.duration._
 import scala.util.Try
 
-import akka.NotUsed
-import akka.actor.ActorSystem
-import akka.http.scaladsl.HttpExt
-import akka.http.scaladsl.model.ws.TextMessage.Strict
-import akka.http.scaladsl.model.{HttpRequest, StatusCodes, Uri}
-import akka.http.scaladsl.model.ws.{Message, TextMessage, WebSocketRequest}
-import akka.stream.scaladsl.{Flow, Keep}
-import akka.stream.Materializer
-import akka.pattern.after
+import org.apache.pekko.NotUsed
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.http.scaladsl.HttpExt
+import org.apache.pekko.http.scaladsl.model.ws.TextMessage.Strict
+import org.apache.pekko.http.scaladsl.model.{HttpRequest, StatusCodes, Uri}
+import org.apache.pekko.http.scaladsl.model.ws.{Message, TextMessage, WebSocketRequest}
+import org.apache.pekko.stream.scaladsl.{Flow, Keep}
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.pattern.after
 
 import play.api.libs.json.{Json, Reads, Writes}
 
@@ -29,14 +29,14 @@ abstract class Http {
   ): Flow[Request, Either[String, Response], Future[Unit]]
 }
 
-class AkkaHTTP(implicit
+class PekkoHTTP(implicit
   materializer: Materializer,
   system: ActorSystem,
   executionContext: ExecutionContext,
   logger: Logger
 ) extends Http {
 
-  implicit val httpExt: HttpExt = akka.http.scaladsl.Http()
+  implicit val httpExt: HttpExt = org.apache.pekko.http.scaladsl.Http()
 
   override def singleRequestJson[T: Reads](request: HttpRequest): Future[T] =
     httpExt.singleRequest(request)

@@ -1,7 +1,7 @@
 package escalator.util.akka.streams
 
-import akka.stream._
-import akka.stream.stage._
+import org.apache.pekko.stream._
+import org.apache.pekko.stream.stage._
 
 final class HoldWithInitial[T](initial: T) extends GraphStage[FlowShape[T, T]] {
   val in: Inlet[T] = Inlet[T]("HoldWithInitial.in")

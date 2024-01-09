@@ -1,6 +1,6 @@
 package escalator.util.resque
 
-import akka.actor.{ Props, ActorSystem }
+import org.apache.pekko.actor.{ Props, ActorSystem }
 import redis.clients.jedis._
 import scala.concurrent._
 import duration._

@@ -1,10 +1,10 @@
 package escalator.util.resque
 
-import akka.actor._
+import org.apache.pekko.actor._
 // import com.redis.RedisClient
 import redis.clients.jedis._
 import scala.collection.mutable.ArrayBuffer
-// import akka.event.Logging
+// import org.apache.pekko.event.Logging
 
 import java.util.Date
 import java.text.SimpleDateFormat

@@ -5,6 +5,8 @@ trait CustomGenerator {
 
 	def processFileData(fileData: String): String
 
+	def customTypes(): List[String]
+
 	def customMappers(tableClass: String): String
 
 	def customMappings(): Map[String,String]

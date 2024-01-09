@@ -1,7 +1,7 @@
 package escalator.util.akka.streams
 
-import akka.stream.{Attributes, FlowShape, Inlet, Outlet}
-import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
+import org.apache.pekko.stream.{Attributes, FlowShape, Inlet, Outlet}
+import org.apache.pekko.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
 
 class RepeatLast[T] extends GraphStage[FlowShape[T, T]] {
   val in: Inlet[T] = Inlet[T]("RepeatLast.in")

@@ -8,6 +8,7 @@ object TextUtil {
   // https://stackoverflow.com/questions/16961774/scala-library-for-finding-plural-of-string-and-possible-singulars-of-a-plural
 
   val CUSTOM_PLURAL_MAPPINGS = MMap.empty[String,String]
+  // var CUSTOM_MAPPINGS: Map[String,String] = CustomNameMapper.CUSTOM_MAPPINGS
 
   def reverseCustomPluralMappings() = {
     for ((k,v) <- CUSTOM_PLURAL_MAPPINGS) yield (v, k)
@@ -34,6 +35,8 @@ object TextUtil {
     val cm = CUSTOM_PLURAL_MAPPINGS
     val p = if (cm.contains(str)){
       cm.get(str).get
+    // } else if (cm.contains(str.downcase))
+    //   cm.get(str.downcase).get
     } else {
       val s = str.toLowerCase
       if (s.endsWith("class")){

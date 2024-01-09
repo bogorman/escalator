@@ -1,6 +1,6 @@
 package escalator.util.akka.streams
 
-import akka.stream.scaladsl.Flow
+import org.apache.pekko.stream.scaladsl.Flow
 
 import cats.data.State
 

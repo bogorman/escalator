@@ -56,7 +56,7 @@ class SmtpMailer extends EscalatorMailer {
 
       Transport.send(mimeMessage)
 
-      println("Email sent successfully")
+      println("Email sent successfully:" + toField)
       EscalatorMailResult(true,Some(uniqueId))
     } catch {
       case e: MessagingException => {

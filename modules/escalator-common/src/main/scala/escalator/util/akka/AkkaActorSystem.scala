@@ -1,6 +1,6 @@
 package escalator.util.akka
 
-import akka.actor.ActorSystem
+import org.apache.pekko.actor.ActorSystem
 
 import escalator.util.logging.Logger
 

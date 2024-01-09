@@ -1,15 +1,15 @@
 package escalator.util.logging
 
-import akka.actor.Actor
-// import akka.actor.ActorRef
-import akka.actor.ActorSystem
+import org.apache.pekko.actor.Actor
+// import org.apache.pekko.actor.ActorRef
+import org.apache.pekko.actor.ActorSystem
 
-import akka.event.LoggingAdapter
+import org.apache.pekko.event.LoggingAdapter
 
-// import akka.event.NoLogging
-// import akka.event.LoggingBus.logLevel
+// import org.apache.pekko.event.NoLogging
+// import org.apache.pekko.event.LoggingBus.logLevel
 
-import akka.event.Logging
+import org.apache.pekko.event.Logging
 
 case object ActorLogBroadcast
 
@@ -28,7 +28,7 @@ class DynamicLoggingAdapter(actorFullPath: String, system: ActorSystem, ref: Act
 
   import Logging._
 
-  private val _systemLogger = akka.event.Logging(system, ref)
+  private val _systemLogger = org.apache.pekko.event.Logging(system, ref)
   private var _logLevel: LogLevel = initLogLevel
 
   private def initLogLevel = {

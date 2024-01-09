@@ -2,9 +2,9 @@ package escalator.util.akka.streams
 
 import scala.annotation.tailrec
 
-import akka.NotUsed
-import akka.stream.{Graph, SinkShape, UniformFanOutShape}
-import akka.stream.scaladsl.{Broadcast, GraphDSL, Keep, Sink}
+import org.apache.pekko.NotUsed
+import org.apache.pekko.stream.{Graph, SinkShape, UniformFanOutShape}
+import org.apache.pekko.stream.scaladsl.{Broadcast, GraphDSL, Keep, Sink}
 
 object SinkUtils {
   def combineMat[T, U, Mat](

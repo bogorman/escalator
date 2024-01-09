@@ -2,7 +2,7 @@ package escalator.util.resque
 
 import java.io.StringWriter
 import java.io.PrintWriter
-import akka.actor._
+import org.apache.pekko.actor._
 // import java.io.File
 import java.io.FileWriter
 // import java.io.IOException

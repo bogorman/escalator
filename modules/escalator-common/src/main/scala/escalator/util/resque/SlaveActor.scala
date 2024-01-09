@@ -1,6 +1,6 @@
 package escalator.util.resque
 
-import akka.actor.{ Actor, ActorLogging } //Status, 
+import org.apache.pekko.actor.{ Actor, ActorLogging } //Status, 
 // import com.redis.RedisClient
 // import redis.clients.jedis._
 
@@ -11,7 +11,7 @@ import concurrent.Future
 import scala.util.Success
 import scala.util.Failure
 
-// import akka.event.Logging
+// import org.apache.pekko.event.Logging
 
 // atomic unit of work
 

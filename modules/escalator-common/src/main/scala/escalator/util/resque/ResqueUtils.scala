@@ -1,6 +1,6 @@
 package escalator.util.resque
 
-// import akka.actor._
+// import org.apache.pekko.actor._
 
 object ResqueUtils {
 
