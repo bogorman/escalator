@@ -1,7 +1,9 @@
 package escalator.util.auth
 
-import org.mindrot.jbcrypt.BCrypt
+// import org.mindrot.jbcrypt.BCrypt
 import escalator.util._
+
+// import org.mindrot.jbcrypt.{BCrypt => B}
 
 object PasswordUtil {
 
@@ -15,8 +17,8 @@ object PasswordUtil {
     if (TextUtil.blank_?(hashed)) {
       false
     } else {
-      println("password:" + password)
-      println("hashed:" + hashed)
+      // println("password:" + password)
+      // println("hashed:" + hashed)
       if (password == hashed) {//should not happen! remove for real life
         true
       } else {

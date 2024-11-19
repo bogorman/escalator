@@ -8,7 +8,7 @@ import java.text._
 import java.time.{Instant, LocalDateTime, ZoneOffset, ZonedDateTime}
 import java.time.Clock
 
-import escalator.models.Timestamp
+import escalator.util.Timestamp
 
 object TimeUtil {
 

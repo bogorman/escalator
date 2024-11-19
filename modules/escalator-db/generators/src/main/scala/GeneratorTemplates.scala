@@ -185,7 +185,7 @@ object GeneratorTemplates {
 		"""
 	}
 
-	def tableDaoTemplate(customGen: CustomGenerator,table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
+	def tableDaoTemplate(customGen: CustomGenerator, table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
 		// val package = ""
 		val initial = modelClass.take(1).toLowerCase
 		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
@@ -229,11 +229,27 @@ object GeneratorTemplates {
 			".returning(_.id)"
 		}    	
 
-		val updateTimeTracking = if (primaryKeyClass.isEmpty){
+		val updateTimeTracking = if (!table.hasColumn("updated_at")){
 			""
 		} else {
 			".copy(updatedAt = ts)"
 		}    	
+
+		// defaultConstructorValue()
+
+		val primaryKeyCol = table.primaryKeyCol
+
+		val defaultPrimaryValue = if (primaryKeyCol.isEmpty){
+			""
+		} else {
+			val pc = primaryKeyCol.get
+		    if (pc.scalaType == "java.util.UUID") {
+		      "escalator.util.RichUUID.BLANK_UUID"
+		    } else {
+		      "0L"
+		    }
+		}
+		
 
 		val primaryIdFuncs = if (primaryKeyClass.isEmpty){
 			""
@@ -249,7 +265,7 @@ object GeneratorTemplates {
 			  }
 
 			  override def update(${initial}: ${modelClass}): Future[${returnClass}] = monitored("update") {
-			  	if (${initial}.id == ${primaryKeyClass.get}(0L)) {
+			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
 			  		insert(${initial})
 			  	} else {
 			  		val ts = TimeUtil.nowTimestamp()
@@ -263,7 +279,7 @@ object GeneratorTemplates {
 			  }
 
 			  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = {
-			  	if (${initial}.id == ${primaryKeyClass.get}(0L)) {
+			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
 			  		store(${initial})
 			  	} else {
 			  		val ts = TimeUtil.nowTimestamp()
@@ -313,7 +329,7 @@ object GeneratorTemplates {
 		    """			
 		}
 
-		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
+		val insertUpdateTimeTracking = if (!table.hasColumn("created_at")){
 			""
 		} else {
 			".copy(createdAt = ts, updatedAt = ts)"

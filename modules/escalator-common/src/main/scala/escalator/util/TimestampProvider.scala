@@ -3,7 +3,7 @@ package escalator.util
 import java.time.Clock
 import java.util.concurrent.atomic.AtomicLong
 
-import escalator.models.Timestamp
+import escalator.util.Timestamp
 
 class TimestampProvider(implicit clock: Clock) {
   val lastTimestamp = new AtomicLong(0L)

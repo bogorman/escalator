@@ -2,7 +2,7 @@ package escalator.util
 
 // import scala.scalajs.js.Date
 
-// import escalator.models.Timestamp
+// import escalator.util.Timestamp
 
 object DateUtil {
   // implicit class RichDate(date: Date) {

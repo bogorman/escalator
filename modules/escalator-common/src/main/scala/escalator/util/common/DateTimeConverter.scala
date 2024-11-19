@@ -109,5 +109,25 @@ object DateTimeConverter {
     dateToLocalDateTime( epochNanoToDate(nanos) )
   }
 
+  def parseLocalDate(dateString: String, patternString: String): java.time.LocalDate = {
+    import java.time.LocalDate;
+    import java.time.format.DateTimeFormatter;
+
+
+    val formatter = DateTimeFormatter.ofPattern(patternString)
+
+    try {
+        // Parse the date string into a LocalDate object
+        val parsedDate = LocalDate.parse(dateString, formatter)
+
+        return parsedDate
+    } catch {
+      case e: java.time.format.DateTimeParseException => {
+        return null
+      }
+    }
+          
+  }
+
 
 }

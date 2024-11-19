@@ -156,6 +156,12 @@ object CodeBuilder {
 			s"_.${c} -> lift(${fc})"
 		}.mkString(",\n")
 
+		val updateAt = if (!table.hasColumn("updated_at")) {
+			""
+		} else {
+			", _.updatedAt -> lift(ts)"
+		}		
+
 		s"""
 		  override def update${functionName}ById(${initial}: ${primaryKeyClass.get}, ${functionArgs}): Future[${primaryKeyClass.get}] = monitored("update-${monitorKey}-by-id") {
 		    val ts = TimeUtil.nowTimestamp()
@@ -163,8 +169,8 @@ object CodeBuilder {
 		      query[${modelClass}]
 		  				.filter(_.id == lift(${initial}))
 		  				.update(
-		  					${updateArgs},
-		  					_.updatedAt -> lift(ts)
+		  					${updateArgs}
+		  					${updateAt}
 		  				)    
 		  				.returning(_.id)
 		    ).runToFuture
@@ -207,6 +213,12 @@ object CodeBuilder {
 			s"_.${c} -> lift(${fc})"
 		}.mkString(",\n")
 
+		val updateAt = if (!table.hasColumn("updated_at")) {
+			""
+		} else {
+			", _.updatedAt -> lift(ts)"
+		}
+
 		s"""
 			override def update${functionName}By${keyNames}(${keyArgs}, ${functionArgs}): Future[_] = monitored("update-${functionMonitorKey}-by-${byMonitorKey}") {
 		    val ts = TimeUtil.nowTimestamp()
@@ -216,8 +228,8 @@ object CodeBuilder {
 		  						${filterArgs}
 		  					)
 		  					.update(
-		  						${updateArgs},
-		  						_.updatedAt -> lift(ts)
+		  						${updateArgs}
+		  						${updateAt}
 		  					)    
 		   	).runToFuture
 		  }

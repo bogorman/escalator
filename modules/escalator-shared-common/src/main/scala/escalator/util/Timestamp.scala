@@ -1,4 +1,4 @@
-package escalator.models
+package escalator.util
 
 import scala.concurrent.duration._
 

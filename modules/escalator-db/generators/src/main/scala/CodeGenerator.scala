@@ -98,6 +98,10 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   }
   
 
+  def hasColumn(columnName: String): Boolean = {
+    tableColumns.find(c => c.columnName == columnName).isDefined
+  }
+
   // def showColumnCaseClasses(): List[String] = {
   //   val caseClasses = tableColumns.filter(_.shouldDefineType).map { col =>
   //     // println("shouldDefineType:" + name + ":" + col.columnName + " " + col.toDefn(name, true))
@@ -200,6 +204,14 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
     caseClass
   }
 
+  def defaultConstructorValue(col: Column): String = {
+    if (col.scalaType == "java.util.UUID") {
+      "escalator.util.RichUUID.BLANK_UUID"
+    } else {
+      "0L"
+    }
+  }
+
   def mainObjectClass(): String = {
     val scalaName = namingStrategy.table(name)
 
@@ -224,9 +236,10 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     val objectArgs = (requiredObjectArgs ++ extraObjectArgs).mkString(", ")     
 
-    val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
-    val autoInsertedAtCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"escalator.models.Timestamp(0L),").getOrElse("")
-    val autoUpdatedAtCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"escalator.models.Timestamp(0L),").getOrElse("")
+    val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)}),").getOrElse("")
+
+    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp(0L),").getOrElse("")
+    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp(0L),").getOrElse("")
 
     val objectClass = if (inheritedFromTable.isDefined){
       val inheritedRequiredColumns = requiredColumns.filter { c => c.inheritedFromColumn.isDefined }
@@ -269,7 +282,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
         namingStrategy.column(col.columnName)
       }.mkString(", ")        
 
-      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(0L),").getOrElse("")
+      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)}),").getOrElse("")
 
       s"""object $scalaName {
 
@@ -356,6 +369,11 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
         c
       }
     }
+  }
+
+  def primaryKeyCol(): Option[Column] = {
+    val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey && !c.isExtraColumn }
+    primaryKeyColumns.headOption
   }
 
   def primaryKeyClass(): Option[String] = {
@@ -998,7 +1016,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         |
         |object ModelSerializers {
         |
-        |  implicit val codecTimestamp: Codec.AsObject[escalator.models.Timestamp] = deriveCodec[escalator.models.Timestamp]
+        |  implicit val codecTimestamp: Codec.AsObject[escalator.util.Timestamp] = deriveCodec[escalator.util.Timestamp]
         |
         |  ${modelTypeSerializers.mkString("\n|  ")}
         |

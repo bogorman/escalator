@@ -22,7 +22,7 @@ object TypeMapper {
     //
     "_varchar" -> "List[String]", //?????
     "Vector(_varchar)" -> "List[String]",
-    "timestamp" -> "escalator.models.Timestamp" 
+    "timestamp" -> "escalator.util.Timestamp" 
   )
 
   // val customMappings = Map()

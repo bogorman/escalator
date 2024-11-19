@@ -65,26 +65,28 @@ class ResqueList(name: String, redis: Jedis) extends ResqueDataStructure {
 
   def parsePayload(jsonString: String) = {
     try {
-      for {
-        Some(M(map)) <- List(scala.util.parsing.json.JSON.parseFull(jsonString))
-        S(name) = map("class")
-        L(args) = map("args")
-        S(trackingid) = map("trackingid")
-      } yield {
-        Payload(name, args.map(_.toString), trackingid)
-      }
-    } catch {
-      case e: Exception => {
-        println("parsePayload FAILED.")
-        e.printStackTrace
-        for {
-          Some(M(map)) <- List(scala.util.parsing.json.JSON.parseFull(jsonString))
-          S(name) = map("class")
-          L(args) = map("args")
-        } yield {
-          Payload(name, args.map(_.toString), "")
-        }
-      }
+    //   for {
+    //     Some(M(map)) <- List(scala.util.parsing.json.JSON.parseFull(jsonString))
+    //     S(name) = map("class")
+    //     L(args) = map("args")
+    //     S(trackingid) = map("trackingid")
+    //   } yield {
+    //     Payload(name, args.map(_.toString), trackingid)
+    //   }
+    // } catch {
+    //   case e: Exception => {
+    //     println("parsePayload FAILED.")
+    //     e.printStackTrace
+    //     for {
+    //       Some(M(map)) <- List(scala.util.parsing.json.JSON.parseFull(jsonString))
+    //       S(name) = map("class")
+    //       L(args) = map("args")
+    //     } yield {
+    //       Payload(name, args.map(_.toString), "")
+    //     }
+    //   }
+      throw new Exception("REPLACE JSON PARSER")
+      Some(Payload("ERROR", List(""), ""))
     }
   }
 }
