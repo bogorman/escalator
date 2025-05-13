@@ -1,4 +1,4 @@
-package escalator.util.akka.streams
+package escalator.util.pekko.streams
 
 import org.apache.pekko.stream.{Attributes, FlowShape, Inlet, Outlet}
 import org.apache.pekko.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}

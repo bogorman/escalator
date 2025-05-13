@@ -579,6 +579,41 @@ object ConnectionUtils {
     r.toMap
   }
 
+  case class Reference(fromTableName: String, fromColName: String, toTableName: String, toColumnName: String, referneceName: String)
+
+  def getReferences(db: Connection, tableName: String, idCol: String): List[Reference] = {
+    val tbl = TextUtil.pluralize(tableName).toLowerCase
+
+    val sql = s"""
+      SELECT
+          conname AS constraint_name,
+          conrelid::regclass AS table_name,
+          a.attname AS column_name,
+          confrelid::regclass AS referenced_table_name,
+          af.attname AS referenced_column_name
+      FROM pg_constraint
+      JOIN pg_attribute a ON a.attnum = ANY(pg_constraint.conkey) AND a.attrelid = pg_constraint.conrelid
+      JOIN pg_attribute af ON af.attnum = ANY(pg_constraint.confkey) AND af.attrelid = pg_constraint.confrelid
+      where confrelid::regclass = '${tbl}'::regclass  
+      and conrelid::regclass != '${tbl}'::regclass    
+      """
+
+      val stmt = db.createStatement()
+      val rs = stmt.executeQuery(sql)
+
+      val l = MList.empty[Reference]
+      while (rs.next()) {
+        val constraintName = rs.getString(1)
+        val tableName = rs.getString(2)
+        val columnName = rs.getString(3)
+        val referencedTableName = rs.getString(4)
+        val referencedColumnName = rs.getString(5)
+
+        l += Reference(tableName,columnName,referencedTableName,referencedColumnName,constraintName)
+      }
+      l.toList
+  }
+
   def getStringList(db: Connection, sql: String): List[String] = {
     // List()
     // db.get
@@ -989,6 +1024,12 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   }
 
+  def internalTypes(): List[String] = {
+    List(
+      // "CorrelationId"
+    )
+  }
+
   def generateSerializer(sharedModelTypes: List[String],sharedModels: List[String]) = {
     val scalaFilePath = modelsBaseFolder+s"/ModelSerializers.scala"
 
@@ -996,7 +1037,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       s"implicit val codec${mt}: Codec.AsObject[${mt}] = deriveCodec[${mt}]"
     }
 
-    val customModelTypes = customGen.customTypes
+    val customModelTypes = internalTypes() ++ customGen.customTypes
     val customModelTypeSerializers = customModelTypes.map { m =>
       s"implicit val codec${m}: Codec.AsObject[${m}] = deriveCodec[${m}]"
     }
@@ -1017,6 +1058,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         |object ModelSerializers {
         |
         |  implicit val codecTimestamp: Codec.AsObject[escalator.util.Timestamp] = deriveCodec[escalator.util.Timestamp]
+        |  implicit val codecCorrelationId: Codec.AsObject[escalator.models.CorrelationId] = deriveCodec[escalator.models.CorrelationId]
         |
         |  ${modelTypeSerializers.mkString("\n|  ")}
         |
@@ -1160,6 +1202,161 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     db.close()    
   }
 
+//   import org.apache.commons.csv._
+// import java.io.FileReader
+// import java.util.UUID
+// import java.time.Instant
+
+// object EntityGenerator {
+  
+//   case class Reference(tableName: String, columnName: String)
+
+//   def main(args: Array[String]): Unit = {
+//     val csvFilePath = "Result 2025-01-29 15-11-37.csv"  // Change to your actual file path
+
+//     // Read CSV file and extract references to "entities"
+//     val references = extractReferences(csvFilePath, "entities")
+
+//     // Generate Scala case class
+//     val caseClassCode = generateEntityCaseClass(references)
+
+//     // Print the generated code
+//     println(caseClassCode)
+//   }
+
+//   /** Reads the CSV and extracts references to a given table */
+//   def extractReferences(csvFilePath: String, referencedTable: String): List[Reference] = {
+//     val reader = new FileReader(csvFilePath)
+//     val csvParser = new CSVParser(reader, CSVFormat.DEFAULT.withFirstRecordAsHeader())
+
+//     val references = csvParser.getRecords
+//       .toArray
+//       .map(_.asInstanceOf[CSVRecord])
+//       .filter(record => record.get("referenced_table_name") == referencedTable)
+//       .map(record => Reference(record.get("table_name"), record.get("column_name")))
+//       .toList
+
+//     csvParser.close()
+//     reader.close()
+//     references
+//   }
+
+//   /** Generates a Scala case class for Entity based on references */
+//   def generateEntityCaseClass(references: List[Reference]): String = {
+//     val baseClass =
+//       """import java.util.UUID
+//         |import java.time.Instant
+//         |
+//         |// Aggregate Root: Entity
+//         |case class Entity(
+//         |    id: UUID,
+//         |    name: String,  // Assuming 'entities' table has a 'name' column
+//         |    createdAt: Instant,""".stripMargin
+
+//     val referenceClasses = references.map { ref =>
+//       val className = ref.tableName.split("_").map(_.capitalize).mkString
+//       s"case class $className(entityId: UUID, someData: String) // Example field"
+//     }.mkString("\n")
+
+//     val referenceFields = references.map { ref =>
+//       val className = ref.tableName.split("_").map(_.capitalize).mkString
+//       val fieldName = ref.tableName.split("_").map(_.toLowerCase).mkString
+//       s"    ${fieldName}: List[$className] = List.empty,"
+//     }.mkString("\n")
+
+//     val caseClassEnd = ")"
+
+//     s"$referenceClasses\n\n$baseClass\n$referenceFields\n$caseClassEnd"
+//   }
+// }
+
+  // case class Reference(tableName: String, columnName: String)
+
+  def generateAggregateRoot(rootTable: String, uniqueId: String) = {
+    val codegenOptions = options
+
+    // codegenOptions.file.foreach { x =>
+    //   outstream.println("Starting...")
+    // }
+
+    val startTime = System.currentTimeMillis()
+    Class.forName(codegenOptions.jdbcDriver)
+    val db: Connection =
+      DriverManager.getConnection(codegenOptions.url,
+                                  codegenOptions.user,
+                                  codegenOptions.password)
+
+
+    val references = ConnectionUtils.getReferences(db,rootTable,uniqueId)
+
+    println(references)
+
+    val namingStrategy = GeneratorNamingStrategy
+
+    // val scalaTableName = namingStrategy.table(rootTable)
+
+    val tableCounts = references.groupBy(_.fromTableName).mapValues(_.size)
+
+    val className = rootTable.split("_").map(_.capitalize).mkString
+    val fieldName = rootTable.split("_").map(_.toLowerCase).mkString    
+
+    val baseClass = s"""
+        |// Aggregate Root: ${className}
+        |case class ${className}Root(
+        |    ${fieldName.toLowerCase}: ${className},
+        """
+
+    // val referenceClasses = references.map { ref =>
+    //   val className = ref.fromTableName.split("_").map(_.capitalize).mkString
+    //   s"case class $className(entityId: UUID, someData: String) // Example field"
+    // }.mkString("\n")
+    val referenceClasses = ""
+
+    val referenceFields = references.map { ref =>
+      // val baseName = ref.fromTableName.split("_").map(_.toLowerCase).mkString
+      val baseName = if (tableCounts(ref.fromTableName) > 1) {
+        //the convntion of using _id
+        val cleanedColName = ref.fromColName.toLowerCase.replace("_entity_id","").replace("_id","")
+        // s"${cleanedColName.toLowerCase}_${ref.fromTableName.toLowerCase}"
+        val merged = mergeOnFullWord(cleanedColName.toLowerCase,ref.fromTableName.toLowerCase)
+        merged
+      } else {
+        ref.fromTableName.toLowerCase
+      }
+
+      // val fieldName = baseName.split("_").map(_.capitalize).mkString
+      val fieldName = namingStrategy.column(baseName)
+
+      // singularize(s)
+      val className = singularize(ref.fromTableName).split("_").map(_.capitalize).mkString
+      s"    $fieldName: List[$className] = List.empty,"
+    }.mkString("\n")
+
+    val caseClassEnd = ")"
+
+    val rootClass = s"$referenceClasses\n\n$baseClass\n$referenceFields\n$caseClassEnd"
+
+    println("generateAggregateRoot " + rootTable + " " + uniqueId)
+    println(rootClass)
+
+
+    db.close()
+  }
+
+  def mergeOnFullWord(s1: String, s2: String): String = {
+    val words1 = s1.split("_")
+    val words2 = s2.split("_")
+
+    // Find the longest overlap based on full words
+    val maxOverlap = (1 to words1.length).findLast { i =>
+      words2.startsWith(words1.takeRight(i))
+    }.getOrElse(0)
+
+    // Merge by removing the overlapping words from s2
+    val mergedWords = words1 ++ words2.drop(maxOverlap)
+    mergedWords.mkString("_")
+  }
+
 }
 
 object CodeGenerator {
@@ -1204,6 +1401,15 @@ object CodeGenerator {
 
     codegen.run()
   }
+
+  def rootGen(codegenOptions: CodegenOptions,customGen: CustomGenerator,rootTable: String, uniqueId: String): Unit = {
+    customGen.setup()
+
+    val namingStrategy = GeneratorNamingStrategy
+    val codegen = CodeGenerator(codegenOptions, namingStrategy, customGen)
+
+    codegen.generateAggregateRoot(rootTable,uniqueId)
+  }  
 
   //////////////////////////
 

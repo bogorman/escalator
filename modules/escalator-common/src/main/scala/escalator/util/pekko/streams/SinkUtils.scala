@@ -1,4 +1,4 @@
-package escalator.util.akka.streams
+package escalator.util.pekko.streams
 
 import scala.annotation.tailrec
 

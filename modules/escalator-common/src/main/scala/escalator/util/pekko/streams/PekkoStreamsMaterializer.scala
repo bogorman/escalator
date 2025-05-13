@@ -1,11 +1,11 @@
-package escalator.util.akka.streams
+package escalator.util.pekko.streams
 
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.stream.{ActorMaterializer, ActorMaterializerSettings, Supervision}
 
 import escalator.util.logging.Logger
 
-object AkkaStreamsMaterializer {
+object PekkoStreamsMaterializer {
   def apply()(implicit logger: Logger, system: ActorSystem): ActorMaterializer = {
     val decider: Supervision.Decider = { e =>
       logger.error(e, "Unhandled exception in stream")

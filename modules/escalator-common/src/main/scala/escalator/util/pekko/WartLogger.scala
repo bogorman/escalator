@@ -1,4 +1,4 @@
-package escalator.util.akka
+package escalator.util.pekko
 
 import org.apache.pekko.actor.{Actor, ActorRef, ActorRefFactory, DeadLetter, Props, UnhandledMessage}
 import org.apache.pekko.io.Tcp.ResumeReading

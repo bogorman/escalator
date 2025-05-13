@@ -20,8 +20,9 @@ object Configuration {
     ConfigSource.fromConfig(config).at(configPath).load[A]
   }
 
-  // def stringList(path: String)(implicit config: Config): Either[ConfigErrors, List[String]] = {
-  //   // println("Configuration stringList path:" + path)
-  //   // ConfigParser.stringList(path).parse(config)
-  // }
+  def stringList(path: String)(implicit config: Config): Either[ConfigReaderFailures, List[String]] = {
+    // println("Configuration stringList path:" + path)
+    // ConfigParser.stringList(path).parse(config)
+    fetch[List[String]](path)
+  }
 }

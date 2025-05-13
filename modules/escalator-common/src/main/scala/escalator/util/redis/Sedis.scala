@@ -8,7 +8,8 @@ trait Dress {
   implicit def fromJedistoScala(j: Jedis) = up(j)
 
   class Wrap(val j: Jedis) {
-    import collection.JavaConverters._
+    // import collection.JavaConverters._
+    import scala.jdk.CollectionConverters._
 
     def hmset(key: String, values: Map[String, String]) = {
       j.hmset(key, values.asJava)
