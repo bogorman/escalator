@@ -70,10 +70,12 @@ object GeneratorTemplates {
 		import monix.execution.Scheduler
 		import ${packageSpace}.persistence.${appName}Database
 
-		import ${packageSpace}.common.persistence.postgres.PostgresDatabase
-		import ${packageSpace}.common.persistence.postgres.CustomNamingStrategy
-		import ${packageSpace}.common.persistence.postgres.PostgresDatabase.PostgresDatabaseConfiguration
+		import escalator.util.postgres.PostgresDatabase
+		import escalator.util.postgres.PostgresDatabase.PostgresDatabaseConfiguration
+		import escalator.util.postgres.CustomNamingStrategy
+
 		import ${packageSpace}.common.persistence.postgres.PostgresCustomEncoder
+		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.persistence.postgres.tables._
 
@@ -160,11 +162,11 @@ object GeneratorTemplates {
 		trait ${tableClass} {
 		  def tableName = "${table.name.toLowerCase}"
 
-		  def store(${initial}: ${modelClass}): Future[${modelClass}]
+		  //def store(${initial}: ${modelClass}): Future[${modelClass}]
 
-		  def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]
+		  //def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]
 
-		  def insert(${initial}: ${modelClass}): Future[_]
+		  //def insert(${initial}: ${modelClass}): Future[_]
 
 		  ${upsert}
 
@@ -346,10 +348,13 @@ object GeneratorTemplates {
 		import escalator.util.logging.Logger
 		import escalator.util.monitoring.Monitoring
 
-		import ${packageSpace}.persistence.postgres.common.MonitoredPostgresOperation
-		import ${packageSpace}.common.persistence.postgres.PostgresDatabase
-		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
+		import escalator.util.postgres.MonitoredPostgresOperation
+		import escalator.util.postgres.PostgresDatabase
+		import escalator.util.postgres.PostgresDatabase.PostgresDatabaseConfiguration
+		import escalator.util.postgres.CustomNamingStrategy
+
 		import ${packageSpace}.common.persistence.postgres.PostgresCustomEncoder
+		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.models._
 
@@ -373,7 +378,7 @@ object GeneratorTemplates {
 
 		  def monitored(name: String) = MonitoredPostgresOperation(name, tableName)
 
-		  override def store(${initial}: ${modelClass}): Future[${modelClass}] = monitored("store") {
+		  private def store(${initial}: ${modelClass}): Future[${modelClass}] = monitored("store") {
 		  	val ts = TimeUtil.nowTimestamp()
 		  	
 		  	val toInsert = ${initial}${insertUpdateTimeTracking}
@@ -385,11 +390,11 @@ object GeneratorTemplates {
 		    ).runToFuture${storeClassUpdate}
 		  }
 
-		  override def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = monitored("store") {
+		  private def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = monitored("store") {
 		  	Future.sequence(  ${initial}l.map { ${initial} => store(${initial}) }  )
 		  }
 
-		  override def insert(${initial}: ${modelClass}): Future[${returnClass}] = monitored("insert") {
+		  private def insert(${initial}: ${modelClass}): Future[${returnClass}] = monitored("insert") {
 		  	val ts = TimeUtil.nowTimestamp()
 		    ctx.run(
 		      query[${modelClass}]

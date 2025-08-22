@@ -22,6 +22,8 @@ abstract class Http {
   // TODO: Decouple from Akka HTTP request
   def singleRequestJson[T: Reads](request: HttpRequest): Future[T]
 
+  def httpRequest(): HttpExt
+
   // Materialized future indicates connection establishment success or failure
   def asFlow[Request: Writes, Response: Reads](
     uri: Uri,
@@ -38,9 +40,13 @@ class PekkoHTTP(implicit
 
   implicit val httpExt: HttpExt = org.apache.pekko.http.scaladsl.Http()
 
+  override def httpRequest(): HttpExt = {
+    return httpExt
+  }
+
   override def singleRequestJson[T: Reads](request: HttpRequest): Future[T] =
     httpExt.singleRequest(request)
-      .flatMap(response => response.entity.toStrict(10.seconds).map(s => Json.parse(s.data.utf8String).as[T]))
+      .flatMap(response => response.entity.toStrict(30.seconds).map(s => Json.parse(s.data.utf8String).as[T]))
 
   def encode[Request: Writes]: Flow[Request, Strict, NotUsed] =
     Flow[Request].map(request => TextMessage(Json.toJson(request).toString()))

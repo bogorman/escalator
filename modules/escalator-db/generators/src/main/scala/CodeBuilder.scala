@@ -2,7 +2,78 @@ package escalator.db.generators
 
 object CodeBuilder {
 
-	def buildUpsertCode(table: Table, key: UniqueKey, modelClass: String): String = {
+	def buildUpsertCode(table: Table, key: String, modelClass: String): String = {
+		// table.uniqueKeysExcludingPrimaryKey
+		val namingStrategy = GeneratorNamingStrategy
+
+		val keyCols = List(key)
+
+		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
+		val initial = modelClass.take(1).toLowerCase
+
+		val uniqueKeyCols = keyCols.map { scol =>
+		  namingStrategy.column(scol)
+		}.toList
+
+		val tableCols = table.columns.map { col =>
+		  namingStrategy.column(col.columnName)
+		}.toList
+
+		val conflictCols = tableCols diff uniqueKeyCols diff  List("id", "createdAt")
+
+		println("uniqueKeyCols")
+		println(uniqueKeyCols)
+
+		println("tableCols")
+		println(tableCols)
+
+		println("conflictCols")
+		println(conflictCols)
+
+		val monitorKey = keyCols.map( _.toLowerCase ).mkString("-")
+		val functionName = keyCols.map( c => namingStrategy.table(c) ).mkString("")
+
+		val conflictArgs = keyCols.map( c => "_."+namingStrategy.column(c) ).mkString(",")
+
+		val updateArgs = conflictCols.map( c => s"_.${c} -> _.${c}" ).mkString(",\n")
+
+		// val includeCreatedAt = 
+		// val includeUpdatedAt = 	
+
+		val returnClass = if (primaryKeyClass.isEmpty){
+			"Long"
+		} else {
+			primaryKeyClass.get
+		}
+
+		val returningValues = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".returningGenerated(_.id)"
+		}
+
+		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
+			""
+		} else {
+			".copy(createdAt = ts, updatedAt = ts)"
+		}
+
+		s"""
+		  override def upsert${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-${monitorKey}") {
+		    val ts = TimeUtil.nowTimestamp()
+		    ctx.run(
+		      query[${modelClass}]
+		        .insert(lift(${initial}${insertUpdateTimeTracking} ))
+		        .onConflictUpdate(${conflictArgs})(
+		        	${updateArgs}
+		        )
+		        ${returningValues}
+		    ).runToFuture
+		  }
+		"""
+	}	
+
+	def buildUpsertOnCode(table: Table, key: UniqueKey, modelClass: String): String = {
 		// table.uniqueKeysExcludingPrimaryKey
 		val namingStrategy = GeneratorNamingStrategy
 
@@ -57,7 +128,7 @@ object CodeBuilder {
 		}
 
 		s"""
-		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-${monitorKey}") {
+		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-on-${monitorKey}") {
 		    val ts = TimeUtil.nowTimestamp()
 		    ctx.run(
 		      query[${modelClass}]
@@ -307,23 +378,27 @@ object CodeBuilder {
 	}
 
 	def buildUpsertsCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
-		val includeUpsert = table.hasUniqueKeysExcludingPrimaryKey()
-		val upsert1 = if (includeUpsert) {
+		//if its a uuid
+		val upsert1 = buildUpsertCode(table,"id",modelClass)
+
+
+		val includeUpsertOn = table.hasUniqueKeysExcludingPrimaryKey()
+		val upsert2= if (includeUpsertOn) {
 			val uKeys = table.uniqueKeysExcludingPrimaryKey
-			val ukCodeStr = uKeys.map { uk => buildUpsertCode(table, uk, modelClass) }.mkString("\n")
+			val ukCodeStr = uKeys.map { uk => buildUpsertOnCode(table, uk, modelClass) }.mkString("\n")
 
 			ukCodeStr
 		} else {
 			""
 		}
 
-		val upsert2 = if (table.inheritedFromTable.isDefined){
+		val upsert3 = if (table.inheritedFromTable.isDefined){
 			println("table.inheritedFromTable.isDefined:" + tableName)
 
 			val it = table.inheritedFromTable.get
 			if (it.hasUniqueKeysExcludingPrimaryKey()){
 				val uKeys2 = it.uniqueKeysExcludingPrimaryKey
-				uKeys2.map { uk => buildUpsertCode(table, uk, modelClass) }.mkString("\n")	
+				uKeys2.map { uk => buildUpsertOnCode(table, uk, modelClass) }.mkString("\n")	
 			} else {
 				""
 			}
@@ -333,7 +408,7 @@ object CodeBuilder {
 		}	
 		// val upsert2 = ""	
 
-		upsert1 + upsert2
+		upsert1 + upsert2 + upsert3
 	}
 
 

@@ -26,9 +26,17 @@ object TextUtil {
       }
     }
 
-    println("singularize:" + str + " -> " + s)
+    // println("singularize:" + str + " -> " + s)
 
     s
+  }
+
+  def pluralize(str: String,count: Int): String = {
+    if (count <= 1){
+      str
+    } else {
+      pluralize(str)
+    }
   }
 
   def pluralize(str: String): String = {
@@ -46,7 +54,7 @@ object TextUtil {
       }
     }
 
-    println("pluralize:" + str + " -> " + p)
+    // println("pluralize:" + str + " -> " + p)
 
     p
   }

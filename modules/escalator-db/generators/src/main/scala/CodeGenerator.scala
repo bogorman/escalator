@@ -45,7 +45,7 @@ case class CodegenOptions(
 
 case class Error(msg: String) extends Exception(msg)
 
-case class UniqueKey(keyName: String, tableName: String, cols: List[SimpleColumn]) {
+case class UniqueKey(keyName: String, tableName: String, cols: List[SimpleColumn], partial: Boolean) {
   def containsColumn(name: String): Boolean = {
     // false
     cols.filter { c => c.columnName == name }.size == 1
@@ -53,7 +53,7 @@ case class UniqueKey(keyName: String, tableName: String, cols: List[SimpleColumn
 }
 
 
-case class IndexKey(name: String, col: SimpleColumn)
+case class IndexKey(name: String, col: SimpleColumn, partial: Boolean)
 case class SimpleCaseClass(tableName: String,mainCaseClass: String, mainObjectClass: String, columnCaseClasses: List[String], uniqueKeyCaseClasses: List[String], extraCaseClasses: String)
 case class ForeignKey(from: SimpleColumn, to: SimpleColumn)
 
@@ -83,9 +83,13 @@ case class SimpleColumn(tableName: String, columnName: String) {
   }
 }
 
-case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String, tableColumns: Seq[Column], uniqueKeys: Set[UniqueKey], isAbstract: Boolean, inheritedFromTable: Option[Table], db: Connection) {
+case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String, tableColumns: Seq[Column], allUniqueKeys: Set[UniqueKey], isAbstract: Boolean, inheritedFromTable: Option[Table], db: Connection) {
   import TextUtil._
   val namingStrategy = GeneratorNamingStrategy
+
+  def uniqueKeys = {
+    allUniqueKeys.filter(_.partial == false)
+  }
 
   def columnCaseClasses(): List[String] = {
     val caseClasses = tableColumns.filter(_.shouldDefineType).map { col =>
@@ -200,7 +204,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     val args = (primaryArgs ++ extraArgs).mkString(", ")
 
-    val caseClass = s"case class $scalaName($args)"
+    val caseClass = s"case class $scalaName($args) extends Persisted"
     caseClass
   }
 
@@ -856,6 +860,9 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val typeCode = row.getShort("TYPE")
       val ordinalPosition = row.getInt("ORDINAL_POSITION")
 
+      val filter = row.getString("FILTER_CONDITION")
+      val partial = filter != null
+
       println("[UK] indexName:" + indexName)
       println("[UK] columnName:" + columnName)
 
@@ -863,6 +870,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       println("[UK] typeCode:" + typeCode)
       println("[UK] ordinalPosition:" + ordinalPosition)
 
+      println("[UK] partial:" + partial)
 
       // rs.getString("INDEX_NAME") to extract index name
       // rs.getBoolean("NON_UNIQUE") to extract unique information
@@ -876,7 +884,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         columnName
       }
 
-      IndexKey(indexName, SimpleColumn(tableName,fixedColName))
+      IndexKey(indexName, SimpleColumn(tableName,fixedColName), partial)
     }.toList
 
     val validIndices = indices.filter{ i => !i.name.startsWith("inherited_") && !i.name.startsWith("ignore_") }
@@ -886,7 +894,9 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     groupedIndixies.map { case (key,values) => 
       // values
       // values.map { indexCols =>
-        UniqueKey(key,tableName,values.map(_.col).toList)
+        val partial = values.map(_.partial).headOption.getOrElse(false)
+
+        UniqueKey(key,tableName,values.map(_.col).toList,partial)
       // }
     }.toSet
   }
@@ -920,7 +930,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       println(caseClassStat)
 
       val caseClassName = caseClassStat.collect {
-        case q"case class $tname (...$paramss)" => tname.value
+        case q"case class $tname (...$paramss) extends Persisted" => tname.value
       }.head
 
       caseClassName
@@ -950,7 +960,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       println(caseClassStat)
 
       val caseClassName = caseClassStat.collect {
-        case q"case class $tname (...$paramss)" => tname.value
+        case q"case class $tname (...$paramss) extends Persisted" => tname.value
       }.head
 
       println("caseClassName:" + caseClassName)

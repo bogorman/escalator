@@ -2,7 +2,21 @@ package escalator.db.generators
 
 object DefnBuilder {
 
-	def buildUpsertDefn(table: Table, key: UniqueKey, modelClass: String): String = {
+	def buildUpsertDefn(table: Table, key: String, modelClass: String): String = {
+		val namingStrategy = GeneratorNamingStrategy
+
+		val initial = modelClass.take(1).toLowerCase
+
+		val keyCols = List(key)		
+
+		val functionName = keyCols.map( c => namingStrategy.table(c) ).mkString("")
+
+		s"""
+		  def upsert${functionName}(${initial}: ${modelClass}): Future[_]
+		"""
+	}
+
+	def buildUpsertOnDefn(table: Table, key: UniqueKey, modelClass: String): String = {
 		val namingStrategy = GeneratorNamingStrategy
 
 		val initial = modelClass.take(1).toLowerCase
@@ -90,21 +104,25 @@ object DefnBuilder {
 	// }
 
 	def buildUpsertsDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
-		val includeUpsert = table.hasUniqueKeysExcludingPrimaryKey()
-		val upsert1 = if (includeUpsert) {
+		//if primary id is uuid then allow upsert
+
+		val upsert1 = buildUpsertDefn(table, "id", modelClass)
+
+		val includeUpsertOn = table.hasUniqueKeysExcludingPrimaryKey()
+		val upsert2 = if (includeUpsertOn) {
 			val uKeys = table.uniqueKeysExcludingPrimaryKey
-			uKeys.map { uk => buildUpsertDefn(table, uk, modelClass) }.mkString("\n")
+			uKeys.map { uk => buildUpsertOnDefn(table, uk, modelClass) }.mkString("\n")
 		} else {
 			""
 		}
 
-		val upsert2 = if (table.inheritedFromTable.isDefined){
+		val upsert3 = if (table.inheritedFromTable.isDefined){
 			println("table.inheritedFromTable.isDefined:" + tableName)
 
 			val it = table.inheritedFromTable.get
 			if (it.hasUniqueKeysExcludingPrimaryKey()){
 				val uKeys2 = it.uniqueKeysExcludingPrimaryKey
-				uKeys2.map { uk => buildUpsertDefn(table, uk, modelClass) }.mkString("\n")	
+				uKeys2.map { uk => buildUpsertOnDefn(table, uk, modelClass) }.mkString("\n")	
 			} else {
 				""
 			}
@@ -114,7 +132,7 @@ object DefnBuilder {
 		}		
 		// val upsert2 = ""
 
-		upsert1 + upsert2
+		upsert1 + upsert2 + upsert3
 	}
 
 	def buildUniqueCheckDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
@@ -176,6 +194,9 @@ object DefnBuilder {
 		val getters = if (includeGettersByKey) {
 			val uKeys = table.uniqueKeysExcludingPrimaryKey
 			val nonKeyColumns = table.nonKeyColumns
+
+			println("buildGettersByUniqueKeysDefn: " + table.name)
+			println(uKeys)
 
 			uKeys.map { uk =>
 				buildGetterDefnByUniqueKey(table, uk, modelClass)

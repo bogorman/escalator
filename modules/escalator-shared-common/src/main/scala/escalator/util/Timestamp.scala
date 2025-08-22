@@ -5,6 +5,8 @@ import scala.concurrent.duration._
 case class Timestamp(nanos: Long) extends AnyVal {
   def isAfter(other: Timestamp): Boolean = this > other
 
+  def after(other: Timestamp): Boolean = this > other
+
   def <(other: Timestamp): Boolean = nanos < other.nanos
   def <=(other: Timestamp): Boolean = nanos <= other.nanos
   def >(other: Timestamp): Boolean = nanos > other.nanos
