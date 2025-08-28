@@ -40,7 +40,11 @@ case class CodegenOptions(
     imports: String = """import io.getquill.WrappedValue""",
     `package`: String = "tables",
     excludedTables: List[String] = List("schema_version","flyway_schema_history"),
-    file: Option[String] = None
+    file: Option[String] = None,
+    // Event generation options
+    generateEvents: Boolean = true,
+    generateAppRepositories: Boolean = true,
+    repositoriesFolder: String = "" // e.g. "modules/core/src/main/scala/fun/slashfun/core/repositories/postgres"
 )
 
 case class Error(msg: String) extends Exception(msg)
@@ -982,8 +986,72 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     }
   }
 
+  private def generateAppRepositories(tables: Seq[Table]) = {
+    // Use repositoriesFolder if provided, otherwise fall back to persistenceBaseFolder
+    val targetFolder = if (options.repositoriesFolder.nonEmpty) {
+      options.repositoriesFolder
+    } else {
+      persistenceBaseFolder
+    }
+
+    // Create the repositories directory if it doesn't exist
+    FileUtil.createDirectoriesForFolder(targetFolder)
+
+    tables.foreach { table =>
+      val simpleCaseClass = table.toCaseClass
+      val caseClass = simpleCaseClass.mainCaseClass
+
+      println("generateAppRepositories: " + caseClass)
+
+      val caseClassStat = caseClass.parse[Stat].get
+      val caseClassName = caseClassStat.collect {
+        case q"case class $tname (...$paramss) extends Persisted" => tname.value
+      }.head
+
+      val tableClass = pluralize(caseClassName)
+      val tableClassName = tableClass+"Table"
+
+      val repositorySource = GeneratorTemplates.appRepositoryTemplate(packageName, caseClassName, tableClass, tableClassName, options.repositoriesFolder)
+      val formattedRepositorySource = formatCode(repositorySource)
+
+      writeIfDoesNotExist(targetFolder + s"/${tableClass}Repository.scala" , formattedRepositorySource)
+    }
+  }
+
+  private def generateModelEvents(tables: Seq[Table]) = {
+    // Create the events directory if it doesn't exist
+    FileUtil.createDirectoriesForFolder(modelsBaseFolder + "/events")
+
+    tables.foreach { table =>
+      if (customGen.shouldGenerateEvents(table.name)) {
+        val simpleCaseClass = table.toCaseClass
+        val caseClass = simpleCaseClass.mainCaseClass
+
+        println("generateModelEvents: " + caseClass)
+
+        val caseClassStat = caseClass.parse[Stat].get
+        val caseClassName = caseClassStat.collect {
+          case q"case class $tname (...$paramss) extends Persisted" => tname.value
+        }.head
+
+        val eventSource = GeneratorTemplates.modelEventTemplate(packageName, caseClassName, table)
+        val formattedEventSource = formatCode(eventSource)
+
+        writeIfDoesNotExist(modelsBaseFolder + s"/events/${caseClassName}Event.scala", formattedEventSource)
+      }
+    }
+  }
+
   def cleanupExistingGeneratedFiles() = {
     cleanupExistingGeneratedFilesInFolder(modelsBaseFolder)
+    cleanupExistingGeneratedFilesInFolder(modelsBaseFolder+"/events")
+    cleanupExistingGeneratedFilesInFolder(persistenceBaseFolder)
+    
+    // Clean repositories folder if specified
+    if (options.repositoriesFolder.nonEmpty) {
+      cleanupExistingGeneratedFilesInFolder(options.repositoriesFolder)
+    }
+    
     cleanupExistingGeneratedFilesInFolder(databaseFolder)
     cleanupExistingGeneratedFilesInFolder(databaseFolder+"/tables")
     cleanupExistingGeneratedFilesInFolder(postgresFolder)
@@ -1189,6 +1257,17 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     generateDatabaseDao(tables)
 
     generateTableDaos(tables)
+
+    println("generateAppRepositories:" + options.generateAppRepositories)
+
+    if (options.generateAppRepositories) {
+      generateAppRepositories(tables)
+    }
+
+    println("generateEvents:" + options.generateEvents)
+    if (options.generateEvents) {
+      generateModelEvents(tables)
+    }
 
 
     // val generatedCode = codegen.tables2code(tables, CustomNamingStrategy, codegenOptions)

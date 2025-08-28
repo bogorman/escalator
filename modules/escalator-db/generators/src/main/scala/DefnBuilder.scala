@@ -3,17 +3,19 @@ package escalator.db.generators
 object DefnBuilder {
 
 	def buildUpsertDefn(table: Table, key: String, modelClass: String): String = {
-		val namingStrategy = GeneratorNamingStrategy
+		// val namingStrategy = GeneratorNamingStrategy
 
-		val initial = modelClass.take(1).toLowerCase
+		// val initial = modelClass.take(1).toLowerCase
 
-		val keyCols = List(key)		
+		// val keyCols = List(key)		
 
-		val functionName = keyCols.map( c => namingStrategy.table(c) ).mkString("")
+		// val functionName = keyCols.map( c => namingStrategy.table(c) ).mkString("")
 
-		s"""
-		  def upsert${functionName}(${initial}: ${modelClass}): Future[_]
-		"""
+		// s"""
+		//   def upsert${functionName}(${initial}: ${modelClass}): Future[_]
+		// """
+
+		""
 	}
 
 	def buildUpsertOnDefn(table: Table, key: UniqueKey, modelClass: String): String = {
@@ -24,7 +26,7 @@ object DefnBuilder {
 		val functionName = key.cols.map( c => namingStrategy.table(c.columnName) ).mkString("")
 
 		s"""
-		  def upsertOn${functionName}(${initial}: ${modelClass}): Future[_]
+		  def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}]
 		"""
 	}
 
@@ -43,6 +45,20 @@ object DefnBuilder {
 
 
 	def buildUpdateDefnById(table: Table, columns: List[Column], modelClass: String): String = {
+		// val namingStrategy = GeneratorNamingStrategy
+
+		// val primaryKeyClass: Option[String] = table.primaryKeyClass	// s"${modelClass}Id"
+		// if (primaryKeyClass.isEmpty){
+		// 	return ""
+		// }
+
+		// val initial = modelClass.take(1).toLowerCase
+		// val functionName = columns.map( c => namingStrategy.table(c.columnName) ).mkString("")
+
+		// s"""
+		//   def update${functionName}ById(${initial}: ${modelClass}): Future[${modelClass}]
+		// """
+
 		val namingStrategy = GeneratorNamingStrategy
 
 		val primaryKeyClass: Option[String] = table.primaryKeyClass	// s"${modelClass}Id"
@@ -57,9 +73,10 @@ object DefnBuilder {
 
 		val functionArgs = columns.map( c => s"${c.toArg(namingStrategy,table.name,true,true)}" ).mkString(",")
 
+		// modelClass
 		s"""
-		  def update${functionName}ById(id: ${primaryKeyClass.get}, ${functionArgs}): Future[${primaryKeyClass.get}]
-		"""
+		  def update${functionName}ById(id: ${primaryKeyClass.get}, ${functionArgs}): Future[${modelClass}]
+		"""		
 	}
 
 	def buildUpdateDefnByUniqueKey(table: Table, key: UniqueKey, columns: List[Column], modelClass: String) = {
@@ -161,6 +178,7 @@ object DefnBuilder {
 			""
 		}
 		updates		
+		// ""
 	}
 
 
@@ -185,6 +203,7 @@ object DefnBuilder {
 			""
 		}
 		updates
+		// ""
 	}
 
 

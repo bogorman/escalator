@@ -46,104 +46,29 @@ eSCALAtor is a full-stack Scala starter project that has recently migrated from 
 - Email sending via SendGrid
 - Comprehensive logging with custom actor loggers
 - WebSocket utilities for real-time communication
+- EventBus implementations (PekkoEventBus for production, NullEventBus for testing)
 
 ## Database Code Generation System
 
-The database generator (`modules/escalator-db/generators/`) is the core of eSCALAtor's code generation approach. It reads PostgreSQL database schemas and generates complete persistence layers.
+The database generator (`modules/escalator-db/generators/`) is the core of eSCALAtor's code generation approach. It reads PostgreSQL database schemas and generates complete persistence layers with ES-compatible event system and customizable repositories.
 
-### Generation Workflow
+**📚 For complete documentation, see: [DATABASE_GENERATOR.md](DATABASE_GENERATOR.md)**
 
-1. **Connection & Schema Reading** (`CodeGenerator.scala`)
-   - Connects to PostgreSQL using JDBC
-   - Reads table metadata, columns, primary keys, foreign keys, unique constraints
-   - Supports table inheritance (abstract tables and inherited tables)
-   - Excludes system tables (flyway_schema_history, schema_version by default)
+### Quick Overview
 
-2. **Model Generation** 
-   - Creates case classes for each table with proper Scala types
-   - Generates value classes for ID types (e.g., `UserId`, `ProductId`)
-   - Handles nullable columns as `Option[T]`
-   - Supports auto-columns (id, created_at, updated_at)
-   - Extends `Persisted` trait for all models
+The generator creates:
+- Model case classes with proper Scala types
+- Repository traits and PostgreSQL implementations
+- ES-compatible events (XxxCreated, XxxUpdated, XxxDeleted)
+- User-customizable repository classes (never overwritten)
 
-3. **Repository Generation** (`GeneratorTemplates.scala`)
-   - Creates trait interfaces in `persistence/database/tables/`
-   - Generates PostgreSQL implementations in `persistence/postgres/tables/`
-   - Includes standard CRUD operations
-   - Generates upsert methods based on unique keys
-   - Creates specialized update methods for column combinations
-   - Handles monitoring and logging automatically
+### Key Features
 
-### Key Components
-
-**CodegenOptions** - Configuration for generation:
-- Database connection (url, user, password, schema)
-- Package names and folder paths
-- Excluded tables list
-- Custom imports
-
-**Table & Column Classes**:
-- `Table`: Represents database table with columns, keys, inheritance
-- `Column`: Handles type mapping, nullable, references, unique constraints
-- `SimpleColumn`: Lightweight column reference for foreign keys
-
-**Template System** (`GeneratorTemplates.scala`):
-- `tableTraitTemplate`: Interface for table operations
-- `tableDaoTemplate`: PostgreSQL implementation with Quill
-- `genericDatabaseTemplate`: Main database trait combining all tables
-- `postgresDatabaseTemplate`: PostgreSQL database implementation
-
-**Code Builders** (`CodeBuilder.scala`, `DefnBuilder.scala`):
-- Build upsert operations based on unique keys
-- Generate update methods for specific column combinations
-- Create getter methods by unique keys
-- Handle conflict resolution in upserts
-
-### Generated Operations
-
-For each table, the generator creates:
-
-1. **Basic CRUD**:
-   - `getById(id)` - fetch by primary key
-   - `update(model)` - update existing record
-   - `upsert(model)` - insert or update
-   - `delete(model)` - delete record
-   - `count` - count all records
-   - `getAll()` - fetch all records
-
-2. **Unique Key Operations** (auto-generated based on constraints):
-   - `upsertOn[UniqueColumns]` - upsert based on unique key
-   - `existsOn[UniqueColumns]` - check existence
-   - `getBy[UniqueColumns]` - fetch by unique key
-   - `update[Columns]By[UniqueKey]` - update specific columns
-
-3. **Batch Operations**:
-   - `upsert(list)` - batch upsert
-   - `store(list)` - batch insert
-
-### Customization Points
-
-**CustomGenerator** trait allows:
-- Custom type mappings
-- Custom SQL-to-Scala type converters
-- Additional model processing
-- Default value handling
-
-**Type Mapping** (`TypeMapper.scala`):
-- PostgreSQL types → Scala types
-- Supports UUID, timestamps, JSON, arrays
-- Extensible via CustomGenerator
-
-### Running the Generator
-
-The generator is typically invoked from consuming projects with:
-```scala
-CodeGenerator.run(codegenOptions, customGenerator)
-```
-
-With system properties:
-- `dbgen.reset=true` - regenerate all files
-- `dbgenreset=true` - alternative reset flag
+- **Auto-generated operations** based on unique constraints (upsertOnX, getByX, existsOnX)
+- **Event publishing** for all CRUD operations with EventBus integration
+- **Customizable repositories** in `{packageName}.core.repositories.postgres/`
+- **Type-safe queries** using Quill with PostgreSQL support
+- **Full monitoring and logging** integration with Kamon
 
 ## Development Commands
 
@@ -159,14 +84,55 @@ This is a core library included in eSCALAtor projects. Build configuration shoul
 ### Linting and Type Checking
 Ask the user for the appropriate lint and typecheck commands for this Scala project.
 
+## Latest Features
+
+### Automatic AppRepository Generation + ES Events
+
+The generator now creates:
+- **Customizable repositories** in `core/repositories/postgres/` (never overwritten)
+- **ES-compatible events** for all CRUD operations  
+- **Event publishing** integrated into all database operations
+
+Repository example:
+```scala
+class UsersRepository(database: PostgresDatabase)
+  (implicit logger: Logger, monitoring: Monitoring, eventBus: EventBus)
+  extends PostgresUsersTable(database) {
+  
+  // Add custom business logic here
+  // Inherits all CRUD + event publishing
+  
+  import PostgresMappedEncoder._
+  import monix.execution.Scheduler.Implicits.global
+  import ctx._
+}
+```
+
+**📚 Complete guide: [DATABASE_GENERATOR.md](DATABASE_GENERATOR.md)**
+
 ## Recent Changes
-- Migration from Akka to Apache Pekko (all Akka imports replaced with Pekko equivalents)
+- **NEW**: Automatic AppRepository generation (`UsersRepository`, `ProductsRepository`, etc.)
+- **NEW**: ES-compatible event system (XxxCreated, XxxUpdated, XxxDeleted events)
+- **NEW**: Configurable repository folder structure
+- **NEW**: Repository naming follows pluralized convention (e.g., `UsersRepository`)
+- **LATEST**: Compile-time event publishing enforcement via EventRequiredResult wrapper
+- **LATEST**: Read/write operation separation with dedicated helpers (`read{}`, `write{}`)
+- **LATEST**: Consistent model return types across all CRUD operations
+- **LATEST**: Efficient PostgreSQL xmax-based upsert pattern for insert/update detection
+- **LATEST**: Enhanced monitoring/event publishing separation with chainable API
+- Migration from Akka to Apache Pekko (all imports updated)
 - Updated to Java 21
-- Enhanced database generation to handle tables without ID, CREATED_AT, and UPDATED_AT columns
+- Enhanced generation for tables without standard columns
 
 ## Important Notes
-- When modifying actor-based code, use Pekko imports, not Akka
-- Database models extend `Persisted` trait
-- Frontend components should extend the `Component` trait
-- Use existing utilities in `escalator.util` for common operations
-- Configuration loading uses PureConfig via `Configuration.fetch`
+- **Repository naming**: Generated as `UsersRepository` (pluralized), not `UserRepository`
+- **Package structure**: Repositories placed in `{packageName}.core.repositories.postgres`
+- **EventBus required**: All repositories need `EventBus` in implicit scope
+- **Never overwritten**: AppRepositories protected once created
+- **Events auto-published**: All CRUD operations trigger events via EventRequiredResult
+- **Compile-time enforcement**: Write operations must call `.publishingXxx()` methods
+- **Read/write separation**: Use `read{}` for queries, `write{}` for mutations
+- **Consistent returns**: All operations return full models (not mixed IDs/models)
+- **xmax efficiency**: Upserts use PostgreSQL's xmax column for single-query insert/update detection
+- **Pekko imports**: Use Pekko, not Akka
+- **Database models**: Must extend `Persisted` trait

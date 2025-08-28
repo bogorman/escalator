@@ -3,74 +3,9 @@ package escalator.db.generators
 object CodeBuilder {
 
 	def buildUpsertCode(table: Table, key: String, modelClass: String): String = {
-		// table.uniqueKeysExcludingPrimaryKey
-		val namingStrategy = GeneratorNamingStrategy
-
-		val keyCols = List(key)
-
-		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
-		val initial = modelClass.take(1).toLowerCase
-
-		val uniqueKeyCols = keyCols.map { scol =>
-		  namingStrategy.column(scol)
-		}.toList
-
-		val tableCols = table.columns.map { col =>
-		  namingStrategy.column(col.columnName)
-		}.toList
-
-		val conflictCols = tableCols diff uniqueKeyCols diff  List("id", "createdAt")
-
-		println("uniqueKeyCols")
-		println(uniqueKeyCols)
-
-		println("tableCols")
-		println(tableCols)
-
-		println("conflictCols")
-		println(conflictCols)
-
-		val monitorKey = keyCols.map( _.toLowerCase ).mkString("-")
-		val functionName = keyCols.map( c => namingStrategy.table(c) ).mkString("")
-
-		val conflictArgs = keyCols.map( c => "_."+namingStrategy.column(c) ).mkString(",")
-
-		val updateArgs = conflictCols.map( c => s"_.${c} -> _.${c}" ).mkString(",\n")
-
-		// val includeCreatedAt = 
-		// val includeUpdatedAt = 	
-
-		val returnClass = if (primaryKeyClass.isEmpty){
-			"Long"
-		} else {
-			primaryKeyClass.get
-		}
-
-		val returningValues = if (primaryKeyClass.isEmpty){
-			""
-		} else {
-			".returningGenerated(_.id)"
-		}
-
-		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
-			""
-		} else {
-			".copy(createdAt = ts, updatedAt = ts)"
-		}
-
-		s"""
-		  override def upsert${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-${monitorKey}") {
-		    val ts = TimeUtil.nowTimestamp()
-		    ctx.run(
-		      query[${modelClass}]
-		        .insert(lift(${initial}${insertUpdateTimeTracking} ))
-		        .onConflictUpdate(${conflictArgs})(
-		        	${updateArgs}
-		        )
-		        ${returningValues}
-		    ).runToFuture
-		  }
-		"""
+		// This is for upsertId which is handled differently in the tableDaoTemplate
+		// as the main upsert() method, so we just return empty string
+		""
 	}	
 
 	def buildUpsertOnCode(table: Table, key: UniqueKey, modelClass: String): String = {
@@ -89,6 +24,13 @@ object CodeBuilder {
 		}.toList
 
 		val conflictCols = tableCols diff uniqueKeyCols diff  List("id", "createdAt")
+
+		val tableCols2 = table.columns.map { col =>
+		  col.columnName
+		}.toList		
+
+		println("tableCols2")
+		println(tableCols2)
 
 		println("uniqueKeyCols")
 		println(uniqueKeyCols)
@@ -109,37 +51,108 @@ object CodeBuilder {
 		// val includeCreatedAt = 
 		// val includeUpdatedAt = 	
 
-		val returnClass = if (primaryKeyClass.isEmpty){
-			"Long"
-		} else {
-			primaryKeyClass.get
-		}
-
-		val returningValues = if (primaryKeyClass.isEmpty){
-			""
-		} else {
-			".returningGenerated(_.id)"
-		}
-
 		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
-			""
+			"${initial}"
 		} else {
-			".copy(createdAt = ts, updatedAt = ts)"
+			s"${initial}.copy(createdAt = ts, updatedAt = ts)"
 		}
+		
+		val pkFieldForCreated = if (primaryKeyClass.isDefined) {
+			val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+			s"${pkField} = cur.${pkField},"
+		} else {
+			""
+		}
+
+		// val returning = tableCols2.map { c =>
+		// 	s"r.${c}"
+		// }.mkString(",")
+
+		// val returned = tableCols.map { c =>
+		// 	s"${c}"
+		// }.mkString(",")		
+
+		// .returning(r => (r.id,r.createdAt,infix"xmax = 0".as[Boolean]))
+
+		// s"""
+		//   override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert-on-${monitorKey}") {
+		//     val ts = TimeUtil.nowTimestamp()
+		//     val toUpsert = ${insertUpdateTimeTracking}
+		    
+		//     // Using xmax = 0 to determine if this was an insert (true) or update (false)
+		//     ctx.run(
+		//       query[${modelClass}]
+		//         .insert(lift(toUpsert))
+		//         .onConflictUpdate(${conflictArgs})(
+		//           ${updateArgs}
+		//         )
+		//         .returningGenerated(_.id)
+		//     ).runToFuture
+		//     .flatMap { case (id,createdAt,wasInserted) =>
+		//       val result = toUpsert.copy(id = id,createdAt = createdAt)
+		//       println("upsert-on-${monitorKey}:" + wasInserted)
+		//       println("upsert-on-${monitorKey}:" + result)
+		//       if (wasInserted) {
+		//         // xmax = 0 means this was an insert
+		//         writeWithTimestamp(result, ts)(Future.successful(()))
+		//           .publishingCreated((cur, cid, time) => ${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		//       } else {
+		//         // xmax != 0 means this was an update  
+		//         writeWithTimestamp(result, ts)(Future.successful(()))
+		//           .publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		//       }
+		//     }
+		//   }
+		// """
+
 
 		s"""
-		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${returnClass}] = monitored("upsert-on-${monitorKey}") {
+		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert-on-${monitorKey}") {
 		    val ts = TimeUtil.nowTimestamp()
-		    ctx.run(
-		      query[${modelClass}]
-		        .insert(lift(${initial}${insertUpdateTimeTracking} ))
-		        .onConflictUpdate(${conflictArgs})(
-		        	${updateArgs}
+		    val toUpsert = ${insertUpdateTimeTracking}
+		    
+			ctx.transaction {
+			 for {
+			  // Step 1: perform upsert, return only the generated ID
+			  id <- ctx.run(
+			  	query[${modelClass}]
+			        .insert(lift(toUpsert))
+			        .onConflictUpdate(${conflictArgs})(
+			          ${updateArgs}
+			        )
+			        .returningGenerated(_.id)
+		    	)
+
+ 				tuples: List[(Timestamp, Timestamp)] <- ctx.run(
+		          query[${modelClass}]
+		            .filter(_.id == lift(id))
+		            .map(r => (r.createdAt, r.updatedAt))
 		        )
-		        ${returningValues}
-		    ).runToFuture
-		  }
+
+				 _ <- if (tuples.isEmpty) { Task.raiseError(new NoSuchElementException("No row returned after upsert")) }  else Task.unit
+
+		        createdAt = tuples.head._1
+		        updatedAt = tuples.head._2
+		        wasInserted = createdAt == updatedAt
+
+				result = toUpsert.copy(id = id, createdAt = createdAt, updatedAt = updatedAt)
+
+				_ <- Task.deferFuture {
+		               if (wasInserted)
+		                 writeWithTimestamp(result, ts)(Future.successful(()))
+		                   .publishingCreated((cur, cid, time) => ${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		               else
+		                 writeWithTimestamp(result, ts)(Future.successful(()))
+		                   .publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		             }
+			      } yield result				
+		      
+		    }.runToFuture
+		}
 		"""
+
+
+
 	}
 
 	def buildUniqueExistanceCode(table: Table, key: UniqueKey, modelClass: String): String = {
@@ -190,19 +203,80 @@ object CodeBuilder {
 
 		s"""
 		  override def existsOn${functionName}(${initial}: ${modelClass}): Future[Boolean] = monitored("exists-${monitorKey}") {
-		    val ts = TimeUtil.nowTimestamp()
-		    ctx.run(
-		      query[${modelClass}]
-				.filter( row =>
-					${filterArgs}
-				)
-		      	.nonEmpty
-		    ).runToFuture
+		    read {
+		      ctx.run(
+		        query[${modelClass}]
+		          .filter( row =>
+		            ${filterArgs}
+		          )
+		          .nonEmpty
+		      ).runToFuture
+		    }
 		  }
 		"""
 	}	
 
 	def buildUpdateCodeById(table: Table, columns: List[Column], modelClass: String): String = {
+		// val namingStrategy = GeneratorNamingStrategy
+
+		// val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
+		// if (primaryKeyClass.isEmpty){
+		// 	return ""
+		// }
+
+		// val initial = modelClass.take(1).toLowerCase
+
+		// // val caseCol = namingStrategy.column(col.columnName)
+
+		// val monitorKey = columns.map( _.columnName.toLowerCase ).mkString("-")
+
+		// val functionName = columns.map( c => namingStrategy.table(c.columnName) ).mkString("")
+		// // make function param list from columns
+
+		// val functionArgs = columns.map( c => s"${c.toArg(namingStrategy,table.name,true,true)}" ).mkString(",")
+
+		// val updateArgs = columns.map { col => 
+		// 	val c = namingStrategy.column(col.columnName)
+		// 	val fc = col.fix(true,c)
+		// 	s"_.${c} -> lift(${fc})"
+		// }.mkString(",\n")
+
+		// val updateAt = if (!table.hasColumn("updated_at")) {
+		// 	""
+		// } else {
+		// 	", _.updatedAt -> lift(ts)"
+		// }
+		
+		// val updatedAtCopy = if (!table.hasColumn("updated_at")) {
+		// 	""
+		// } else {
+		// 	".copy(updatedAt = ts)"
+		// }
+		
+		// val pkFieldForCreated = if (primaryKeyClass.isDefined) {
+		// 	val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+		// 	s"${pkField} = m.${pkField},"
+		// } else {
+		// 	""
+		// }
+
+		// s"""
+		//   override def update${functionName}ById(${initial}: ${modelClass}): Future[${modelClass}] = monitored("update-${monitorKey}-by-id") {
+		//     val ts = TimeUtil.nowTimestamp()
+		//     val updatedModel = ${initial}${updatedAtCopy}
+		    
+		//     write(updatedModel) {
+		//       ctx.run(
+		//         query[${modelClass}]
+		//           .filter(_.id == lift(${initial}.id))
+		//           .update(lift(updatedModel))
+		//           .returning(u => u)
+		//       ).runToFuture
+		//     }.publishingUpdated((m, prev, cid, time) => ${modelClass}Updated(m, prev, ${pkFieldForCreated} cid, time))
+		//   }
+		// """
+
+
 		val namingStrategy = GeneratorNamingStrategy
 
 		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
@@ -231,26 +305,52 @@ object CodeBuilder {
 			""
 		} else {
 			", _.updatedAt -> lift(ts)"
+		}
+
+		val copyUpdates = columns.map { col => 
+			val c = namingStrategy.column(col.columnName)
+			val fc = col.fix(true,c)
+			s"${fc} = ${fc}"
+		}.mkString(",\n")
+		val updatedAtCopy = "updatedAt = ts"
+
+		val pkFieldForCreated = if (primaryKeyClass.isDefined) {
+			val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+			s"${pkField} = cur.${pkField},"
+		} else {
+			""
 		}		
 
+		// ${initial}
+		// primaryKeyClass.get
 		s"""
-		  override def update${functionName}ById(${initial}: ${primaryKeyClass.get}, ${functionArgs}): Future[${primaryKeyClass.get}] = monitored("update-${monitorKey}-by-id") {
-		    val ts = TimeUtil.nowTimestamp()
-		    ctx.run(
-		      query[${modelClass}]
-		  				.filter(_.id == lift(${initial}))
+		  override def update${functionName}ById(id: ${primaryKeyClass.get}, ${functionArgs}): Future[${modelClass}] = monitored("update-${monitorKey}-by-id") {
+			val ts = TimeUtil.nowTimestamp()
+
+		    getById(id).flatMap {
+		        case Some(currentModel) =>
+		          val updatedModel = currentModel.copy(${copyUpdates},${updatedAtCopy})
+
+		          write(updatedModel) {
+		            ctx.run(
+		              query[${modelClass}]
+		  				.filter(_.id == lift(id))
 		  				.update(
 		  					${updateArgs}
 		  					${updateAt}
-		  				)    
-		  				.returning(_.id)
-		    ).runToFuture
+		  				)  
+		            ).runToFuture
+		          }.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, Some(updatedModel), ${pkFieldForCreated} cid, time))
+
+		        case None =>
+		          Future.failed(new NoSuchElementException(s"No ${modelClass} found with id $$id"))
+		      }
 		  }
-		"""
+		"""		
 	}
 
 	def buildUpdateCodeByUniqueKey(table: Table, key: UniqueKey, columns: List[Column], modelClass: String) = {
-		val namingStrategy = GeneratorNamingStrategy
+	val namingStrategy = GeneratorNamingStrategy
 
 		val initial = modelClass.take(1).toLowerCase
 
@@ -290,21 +390,56 @@ object CodeBuilder {
 			", _.updatedAt -> lift(ts)"
 		}
 
+		val copyUpdates = columns.map { col => 
+			val c = namingStrategy.column(col.columnName)
+			val fc = col.fix(true,c)
+			s"${fc} = ${fc}"
+		}.mkString(",\n")
+		val updatedAtCopy = "updatedAt = ts"		
+
+		// s"""
+		// 	override def update${functionName}By${keyNames}(${keyArgs}, ${functionArgs}): Future[_] = monitored("update-${functionMonitorKey}-by-${byMonitorKey}") {
+		//     val ts = TimeUtil.nowTimestamp()
+		//    	ctx.run(
+		//    	  query[${modelClass}]
+		//   					.filter( ${initial} =>
+		//   						${filterArgs}
+		//   					)
+		//   					.update(
+		//   						${updateArgs}
+		//   						${updateAt}
+		//   					)    
+		//    	).runToFuture
+		//   }
+		// """
+
+		// ${functionName}
 		s"""
-			override def update${functionName}By${keyNames}(${keyArgs}, ${functionArgs}): Future[_] = monitored("update-${functionMonitorKey}-by-${byMonitorKey}") {
-		    val ts = TimeUtil.nowTimestamp()
-		   	ctx.run(
-		   	  query[${modelClass}]
-		  					.filter( ${initial} =>
-		  						${filterArgs}
-		  					)
-		  					.update(
-		  						${updateArgs}
-		  						${updateAt}
-		  					)    
-		   	).runToFuture
+		  override def update${functionName}By${keyNames}(${keyArgs}, ${functionArgs}): Future[${modelClass}] = monitored("update-${monitorKey}-by-id") {
+			val ts = TimeUtil.nowTimestamp()
+
+		    getBy${keyNames}(${keyArgs}).flatMap {
+		        case Some(currentModel) =>
+		          val updatedModel = currentModel.copy(${copyUpdates},${updatedAtCopy})
+
+		          write(updatedModel) {
+		            ctx.run(
+		              query[${modelClass}]
+						.filter( ${initial} =>
+							${filterArgs}
+						)
+		  				.update(
+		  					${updateArgs}
+		  					${updateAt}
+		  				)  
+		            ).runToFuture
+		          }.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, Some(updatedModel), id = cur.id, cid, time))
+
+		        case None =>
+		          Future.failed(new NoSuchElementException(s"No ${modelClass} found with ${keyArgs}"))
+		      }
 		  }
-		"""
+		"""			
 	}
 
 	def buildGetterCodeByUniqueKey(table: Table, key: UniqueKey, modelClass: String) = {
@@ -347,14 +482,15 @@ object CodeBuilder {
 		// def getBy${keyNames}(${keyArgs}): Future[_]
 		s"""
 			override def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]] = monitored("get-by-${byMonitorKey}") {
-		    val ts = TimeUtil.nowTimestamp()
-		   	ctx.run(
-		   	  query[${modelClass}]
-					.filter( ${initial} =>
-						${filterArgs}
-					)
-                  .take(1)
-            	).runToFuture.map(_.headOption)
+		    read {
+		   	  ctx.run(
+		   	    query[${modelClass}]
+					  .filter( ${initial} =>
+						  ${filterArgs}
+					  )
+                    .take(1)
+            	  ).runToFuture.map(_.headOption)
+		    }
 		  	}
 		"""
 	}
@@ -441,6 +577,8 @@ object CodeBuilder {
 			""
 		}
 		updates		
+
+		// ""
 	}
 
 	def buildUpdatesByUniqueKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
@@ -464,6 +602,7 @@ object CodeBuilder {
 			""
 		}
 		updates
+		// ""
 	}
 
 	def buildGettersByUniqueKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {

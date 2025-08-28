@@ -12,4 +12,9 @@ trait CustomGenerator {
 	def customMappings(): Map[String,String]
 
 	def useDefaultValue(tableName: String,columnName: String): Boolean
+
+	// Event generation customization
+	def shouldGenerateEvents(tableName: String): Boolean = true
+
+	def customEventMetadata(tableName: String): List[String] = List.empty
 }

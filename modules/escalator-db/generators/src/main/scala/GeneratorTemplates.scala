@@ -49,6 +49,7 @@ object GeneratorTemplates {
 		"""
 	}
 
+	// s"	object ${objectName} extends ${tcc}Repository(this)"
 	def postgresDatabaseTemplate(packageSpace: String, appName: String, tableCaseClasses: List[String]) = {
 		val tables = tableCaseClasses.map { tcc =>
 			val tableName = pluralize(tcc)
@@ -56,6 +57,13 @@ object GeneratorTemplates {
 
 			s"	object ${objectName} extends Postgres${tableName}Table(this) with PostgresCustomEncoder"
 		}
+
+		val tables2 = tableCaseClasses.map { tcc =>
+			val tableName = pluralize(tcc)
+			val objectName = snakeToLowerCamel(snakeify(tableName))
+
+			s"	//	object ${objectName} extends ${tableName}Repository(this)"
+		}		
 
 		s"""
 		package ${packageSpace}.persistence.postgres
@@ -66,6 +74,7 @@ object GeneratorTemplates {
 		import escalator.util.logging.Logger
 
 		import escalator.util.monitoring.Monitoring
+		import escalator.util.events.EventBus
 
 		import monix.execution.Scheduler
 		import ${packageSpace}.persistence.${appName}Database
@@ -78,12 +87,14 @@ object GeneratorTemplates {
 		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.persistence.postgres.tables._
+		import ${packageSpace}.persistence._
 
 		class Postgres${appName}Database(
 		  config: PostgresDatabaseConfiguration
 		)(implicit
 		  logger: Logger,
-		  monitoring: Monitoring//,
+		  monitoring: Monitoring,
+		  eventBus: EventBus
 		) extends PostgresDatabase (
 		  new PostgresMonixJdbcContext(CustomNamingStrategy ,"postgres")
 		) with ${appName}Database {
@@ -91,6 +102,8 @@ object GeneratorTemplates {
 		  ///
 		  ${tables.mkString("\n")}
 
+		  /// include these in your repository
+		  ${tables2.mkString("\n")}
 		}
 
 		"""
@@ -140,13 +153,13 @@ object GeneratorTemplates {
 			s"""
 				def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]]
 
-				def update(${initial}: ${modelClass}): Future[_]
+				def update(${initial}: ${modelClass}): Future[${modelClass}]
 
 				def upsert(${initial}: ${modelClass}): Future[${modelClass}]
 
 				def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]				
 
-				def delete(${initial}: ${modelClass}): Future[_]
+				def delete(${initial}: ${modelClass}): Future[${modelClass}]
 			"""
 		}
 
@@ -192,6 +205,15 @@ object GeneratorTemplates {
 		val initial = modelClass.take(1).toLowerCase
 		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
 
+		val pkFieldForCreated = if (primaryKeyClass.isDefined) {
+			val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+			s"${pkField} = ${initial}.${pkField},"
+		} else {
+			""
+		}
+		
+		val pkFieldForDeleted = pkFieldForCreated
+
 		println("tableDaoTemplate:" + tableName)
 		println(table.uniqueKeysExcludingPrimaryKey)
 
@@ -235,7 +257,13 @@ object GeneratorTemplates {
 			""
 		} else {
 			".copy(updatedAt = ts)"
-		}    	
+		}    
+
+		val insertUpdateTimeTracking = if (!table.hasColumn("created_at")){
+			""
+		} else {
+			".copy(createdAt = ts, updatedAt = ts)"
+		}				
 
 		// defaultConstructorValue()
 
@@ -250,6 +278,13 @@ object GeneratorTemplates {
 		    } else {
 		      "0L"
 		    }
+		}	
+		
+		val pkFieldForUpdate = if (primaryKeyClass.isDefined) {
+			val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+			s"${pkField} = updatedEntity.${pkField},"
+		} else {
+			""
 		}
 		
 
@@ -259,40 +294,37 @@ object GeneratorTemplates {
 
 			s"""
 			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = monitored("getById") {
-	            ctx.run(
-	                query[${modelClass}]
-	                  .filter(_.id == lift(${initial}))
-	                  .take(1)
-	            ).runToFuture.map(_.headOption)
+			    read {
+			      ctx.run(
+			        query[${modelClass}]
+			          .filter(_.id == lift(${initial}))
+			          .take(1)
+			      ).runToFuture.map(_.headOption)
+			    }
 			  }
 
-			  override def update(${initial}: ${modelClass}): Future[${returnClass}] = monitored("update") {
+			  override def update(${initial}: ${modelClass}): Future[${modelClass}] = monitored("update") {
 			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
 			  		insert(${initial})
 			  	} else {
 			  		val ts = TimeUtil.nowTimestamp()
-			  		ctx.run(
-			  			query[${modelClass}]
-			  				.filter(_.id == lift(${initial}.id))
-			  				.update(lift(${initial}${updateTimeTracking} ))
-			  				${returningValues}
-			  		).runToFuture
+			  		val updatedModel = ${initial}${updateTimeTracking}
+			  		
+			  		write(updatedModel) {
+			  			ctx.run(
+			  				query[${modelClass}]
+			  					.filter(_.id == lift(${initial}.id))
+			  					.update(lift(updatedModel))
+			  			).runToFuture
+			  		}.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
 			  	}
 			  }
 
-			  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = {
+			  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert") {
 			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
-			  		store(${initial})
+			  		insert(${initial})
 			  	} else {
-			  		val ts = TimeUtil.nowTimestamp()
-			  		ctx.run(
-			  			query[${modelClass}]
-			  				.filter(_.id == lift(${initial}.id))
-			  				.update(lift(${initial}${updateTimeTracking} ))
-			  				${returningValues}
-			  		).runToFuture.map { updatedId =>
-				    	${initial}${updateTimeTracking}
-				    }
+			  		update(${initial})
 			  	}
 			  }		  
 
@@ -300,13 +332,16 @@ object GeneratorTemplates {
 			  	Future.sequence(  ${initial}l.map { ${initial} => upsert(${initial}) }  )
 			  }	
 
-			  override def delete(${initial}: ${modelClass}): Future[${returnClass}] = monitored("delete") {
-			    ctx.run(
-			      query[${modelClass}]
-			      	.filter(_.id == lift(${initial}.id))
-			        .delete
-			        ${returningValues}
-			    ).runToFuture
+			  override def delete(${initial}: ${modelClass}): Future[${modelClass}] = monitored("delete") {
+			    val ts = TimeUtil.nowTimestamp()
+			    
+			    write(${initial}) {
+			      ctx.run(
+			        query[${modelClass}]
+			          .filter(_.id == lift(${initial}.id))
+			          .delete
+			      ).runToFuture
+			    }.publishingDeleted((m, cid, time) => ${modelClass}Deleted(m, ${pkFieldForDeleted} cid, time))
 			  }
 
 			"""
@@ -330,11 +365,12 @@ object GeneratorTemplates {
 		    }
 		    """			
 		}
-
-		val insertUpdateTimeTracking = if (!table.hasColumn("created_at")){
-			""
+		
+		// ${primaryKeyClass.get}(r
+		val insertModelConstruction = if (primaryKeyClass.isEmpty) {
+			"toInsert"
 		} else {
-			".copy(createdAt = ts, updatedAt = ts)"
+			s"toInsert.copy(id = result)"
 		}
 
 		s"""
@@ -352,19 +388,31 @@ object GeneratorTemplates {
 		import escalator.util.postgres.PostgresDatabase
 		import escalator.util.postgres.PostgresDatabase.PostgresDatabaseConfiguration
 		import escalator.util.postgres.CustomNamingStrategy
+		import escalator.util.postgres.{EventRequiredResult, RepositoryHelpers}
+
+		import escalator.util.events.EventBus
+		import escalator.models.CorrelationId
+		import java.util.UUID
+		import escalator.util.Timestamp
 
 		import ${packageSpace}.common.persistence.postgres.PostgresCustomEncoder
 		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.models._
+		import ${packageSpace}.models.events._
 
 		import ${packageSpace}.persistence.database.tables.${tableClass}
 
+		import monix.eval.Task
+		import escalator.util.monix.TaskSyntax._
+
 		abstract class Postgres${tableClass}(database: PostgresDatabase)
 		  (implicit logger: Logger, 
-		    monitoring: Monitoring)
+		    monitoring: Monitoring,
+		    eventBus: EventBus)
 		    extends ${tableClass}
 		    with PostgresCustomEncoder
+		    with RepositoryHelpers
 		    {
 
 		  def db:PostgresDatabase = database 
@@ -378,30 +426,24 @@ object GeneratorTemplates {
 
 		  def monitored(name: String) = MonitoredPostgresOperation(name, tableName)
 
-		  private def store(${initial}: ${modelClass}): Future[${modelClass}] = monitored("store") {
+
+		  private def insert(${initial}: ${modelClass}): Future[${modelClass}] = monitored("insert") {
 		  	val ts = TimeUtil.nowTimestamp()
-		  	
 		  	val toInsert = ${initial}${insertUpdateTimeTracking}
 
 		    ctx.run(
 		      query[${modelClass}]
 		        .insert(lift(toInsert))
 		        ${returningGeneratedValues}
-		    ).runToFuture${storeClassUpdate}
+		    ).runToFuture${storeClassUpdate}.flatMap { result =>
+		      writeWithTimestamp(result, ts)(Future.successful(()))
+		        .publishingCreated((m, cid, time) => ${modelClass}Created(m, ${pkFieldForCreated} cid, time))
+		    }
 		  }
 
-		  private def store(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = monitored("store") {
-		  	Future.sequence(  ${initial}l.map { ${initial} => store(${initial}) }  )
+		  private def insert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = monitored("insert") {
+		  	Future.sequence(  ${initial}l.map { ${initial} => insert(${initial}) }  )
 		  }
-
-		  private def insert(${initial}: ${modelClass}): Future[${returnClass}] = monitored("insert") {
-		  	val ts = TimeUtil.nowTimestamp()
-		    ctx.run(
-		      query[${modelClass}]
-		        .insert(lift(${initial}${insertUpdateTimeTracking}))
-		        ${returningValues}
-		    ).runToFuture
-		  }	  
 
 		  ${upsert}
 
@@ -416,17 +458,133 @@ object GeneratorTemplates {
 		  ${gettersByUniqueKeys}
 
 		  override def count: Future[Long] = monitored("count") {
-		    ctx.run(query[${modelClass}].size).runToFuture
+		    read {
+		      ctx.run(query[${modelClass}].size).runToFuture
+		    }
 		  }
 
 		  override def getAll(): Future[List[${modelClass}]] = monitored("get_all") { 
-            ctx.run(
-                query[${modelClass}]
-            ).runToFuture
+		    read {
+		      ctx.run(
+		        query[${modelClass}]
+		      ).runToFuture
+		    }
 		  }		  
 
 		}
 		"""	
+	}
+
+	def appRepositoryTemplate(packageSpace: String, modelClass: String, tableName: String, tableClass: String, repositoriesFolder: String = "") = {
+		val initial = modelClass.take(1).toLowerCase
+
+		s"""
+		package ${packageSpace}.core.repositories.postgres
+
+		${autoGeneratedComment}
+
+		import scala.concurrent.Future
+
+		import escalator.util.logging.Logger
+		import escalator.util.monitoring.Monitoring
+
+		import escalator.util.postgres.PostgresDatabase
+		import escalator.util.events.EventBus
+		import fun.slash.common.persistence.postgres.PostgresMappedEncoder
+
+		import ${packageSpace}.models._
+		import ${packageSpace}.persistence.database.tables.${tableClass}
+		import ${packageSpace}.persistence.postgres.tables.Postgres${tableClass}
+
+		class ${tableName}Repository(database: PostgresDatabase)
+		  (implicit logger: Logger, 
+		    monitoring: Monitoring,
+		    eventBus: EventBus)
+		    extends Postgres${tableClass}(database) {
+
+		  // Override methods here to add custom repository logic
+		  // This class inherits all standard CRUD operations from Postgres${tableClass}
+
+		  import PostgresMappedEncoder._
+		  import monix.execution.Scheduler.Implicits.global
+		  import ctx._
+		  
+		}
+		"""
+	}
+
+	def modelEventTemplate(packageSpace: String, modelClass: String, table: Table) = {
+		val primaryKeyClass: Option[String] = table.primaryKeyClass
+		val primaryKeyField = if (primaryKeyClass.isDefined) {
+			val primaryKeyCol = table.primaryKeyCol.get
+			s"${primaryKeyCol.toArg(GeneratorNamingStrategy, table.name, true)}"
+		} else {
+			"// No primary key available"
+		}
+
+		val correlationIdParam = if (primaryKeyClass.isDefined) {
+			"correlationId: CorrelationId"
+		} else {
+			"correlationId: CorrelationId"
+		}
+
+		val primaryKeyParam = if (primaryKeyClass.isDefined) {
+			s"${primaryKeyField},"
+		} else {
+			""
+		}
+		
+		val primaryKeyDefInTrait = if (primaryKeyClass.isDefined) {
+			s"def ${table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true)}"
+		} else {
+			""
+		}
+
+		s"""
+		package ${packageSpace}.models.events
+
+		${autoGeneratedComment}
+
+		import java.time.Instant
+
+		import escalator.ddd.{Event, PersistentEvent}
+		import escalator.models.CorrelationId
+		import escalator.util.Timestamp
+
+		import ${packageSpace}.models._
+
+		/**
+		 * Events for ${modelClass} aggregate
+		 */
+		sealed trait ${modelClass}Event extends Event with PersistentEvent {
+		  def ${modelClass.toLowerCase}: ${modelClass}
+		  ${primaryKeyDefInTrait}
+		  def correlationId: CorrelationId
+		  def timestamp: Timestamp
+		}
+
+		case class ${modelClass}Created(
+		  ${modelClass.toLowerCase}: ${modelClass},
+		  ${primaryKeyParam}
+		  ${correlationIdParam},
+		  timestamp: Timestamp
+		) extends ${modelClass}Event
+
+		case class ${modelClass}Updated(
+		  ${modelClass.toLowerCase}: ${modelClass},
+		  previous${modelClass}: Option[${modelClass}] = None,
+		  ${primaryKeyParam}
+		  ${correlationIdParam},
+		  timestamp: Timestamp
+		) extends ${modelClass}Event
+
+		case class ${modelClass}Deleted(
+		  ${modelClass.toLowerCase}: ${modelClass},
+		  ${primaryKeyParam}
+		  ${correlationIdParam},
+		  timestamp: Timestamp
+		) extends ${modelClass}Event
+		"""
 	}
 
 
