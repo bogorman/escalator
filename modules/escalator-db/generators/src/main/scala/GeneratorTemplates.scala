@@ -490,7 +490,7 @@ object GeneratorTemplates {
 
 		import escalator.util.postgres.PostgresDatabase
 		import escalator.util.events.EventBus
-		import fun.slash.common.persistence.postgres.PostgresMappedEncoder
+		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.models._
 		import ${packageSpace}.persistence.database.tables.${tableClass}
