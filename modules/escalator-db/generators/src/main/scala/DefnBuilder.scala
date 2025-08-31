@@ -1,6 +1,22 @@
 package escalator.db.generators
 
+import scala.collection.mutable.{Map => MMap}
+
 object DefnBuilder {
+	
+	var tablesLookup: MMap[String, Table] = MMap.empty
+	
+	def setTablesLookup(tables: MMap[String, Table]): Unit = {
+		tablesLookup = tables
+	}
+
+	def extractClassName(fullType: String): String = {
+		if (fullType.contains(".")) {
+			fullType.split("\\.").last
+		} else {
+			fullType
+		}
+	}
 
 	def buildUpsertDefn(table: Table, key: String, modelClass: String): String = {
 		// val namingStrategy = GeneratorNamingStrategy
@@ -224,6 +240,76 @@ object DefnBuilder {
 			""
 		}
 		getters
+	}
+	
+	def buildGettersByForeignKeysDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+		val namingStrategy = GeneratorNamingStrategy
+		println("buildGettersByForeignKeysDefn " + table.name)
+
+		// Find columns that are foreign keys (reference other tables)
+		val foreignKeyColumns = table.tableColumns.filter(col => col.references.isDefined)
+		
+		if (foreignKeyColumns.isEmpty) {
+			""
+		} else {
+			foreignKeyColumns.map { col =>
+				val foreignTable = col.references.get.tableName
+
+				val foreignKeyType = if (col.columnName.endsWith("_id")) {
+					// This is a foreign key column, use the proper ID type
+					namingStrategy.table(foreignTable) + "Id"
+				} else {
+					// This column references another table but isn't a typical _id column
+					// Look up the referenced table and get the actual column type
+					val referencedColumnName = col.references.get.columnName
+					tablesLookup.get(foreignTable) match {
+						case Some(referencedTable) =>
+							val referencedColumn = referencedTable.findColumn(referencedColumnName)
+							if (referencedTable.name == "attributes") {
+								col.toDefn(col.tableName, true)
+							} else {							
+								// println("foreignTable found. " + referencedTable.name)
+								// println("foreignTable referencedColumnName:" + referencedColumnName)
+								// println("foreignTable referencedColumn. " + referencedColumn.scalaType)
+
+								// println("foreignTable referencedColumn. " + referencedColumn.toDefn(referencedColumn.tableName, true)) 
+								// println("foreignTable referencedColumn. " + referencedColumn.toArg(namingStrategy,referencedColumn.tableName,true,true)) 
+
+								// extractClassName(referencedColumn.scalaType)
+								referencedColumn.toDefn(referencedColumn.tableName, true)
+							}
+						case None =>
+							println("foreignTable fallback")
+							// Fallback to the original approach if table not found
+							extractClassName(col.scalaType)
+					}
+				}
+
+
+				val methodName = s"getBy${namingStrategy.table(col.columnName).capitalize}"
+				val bulkMethodName = s"getBy${namingStrategy.table(col.columnName).capitalize}s"
+				val paramName = namingStrategy.column(col.columnName)
+
+				val c = table.findColumn(col.columnName)
+				// println("XXXXXXXX " + col.columnName + " -> " + foreignTable)
+				// println(foreignKeyType)
+				// println(col.scalaType)
+				// println(paramName)
+				// println(s"${c.toArg(namingStrategy,table.name,true,true)}")
+				
+				// val keyArgs = key.cols.map{ sc => 
+				// 	val c = table.findColumn(sc.columnName)
+				// 	s"${c.toArg(namingStrategy,table.name,true,true)}"
+				// }.mkString(",")
+				
+				// For getBy methods, we don't wrap nullable columns in Option - the method handles nulls internally
+				val singleMethod = s"  def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]]"
+				
+				val bulkMethod = s"  def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]]"
+				
+				singleMethod + "\n\n" + bulkMethod
+			}.mkString("\n")
+		}
 	}
 
 

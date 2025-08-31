@@ -15,6 +15,7 @@ import escalator.util.disk._
 import escalator.util._
 
 // import db.generators._
+import escalator.db.generators.AttributeTypeData
 
 import org.scalafmt.interfaces.Scalafmt
 import scala.meta._
@@ -44,7 +45,15 @@ case class CodegenOptions(
     // Event generation options
     generateEvents: Boolean = true,
     generateAppRepositories: Boolean = true,
-    repositoriesFolder: String = "" // e.g. "modules/core/src/main/scala/fun/slashfun/core/repositories/postgres"
+    repositoriesFolder: String = "", // e.g. "modules/core/src/main/scala/fun/slashfun/core/repositories/postgres"
+    
+    // Aggregate generation options
+    generateAggregates: Boolean = false,
+    aggregatesFolder: String = "", // e.g. "modules/core/src/main/scala/aggregates"
+    aggregateRootTables: List[String] = List.empty, // e.g. List("users", "orders", "products")
+    maxAggregateDepth: Int = 3,
+    generatePekkoActors: Boolean = false,
+    aggregateBoundaryHints: Map[String, Boolean] = Map.empty
 )
 
 case class Error(msg: String) extends Exception(msg)
@@ -60,6 +69,35 @@ case class UniqueKey(keyName: String, tableName: String, cols: List[SimpleColumn
 case class IndexKey(name: String, col: SimpleColumn, partial: Boolean)
 case class SimpleCaseClass(tableName: String,mainCaseClass: String, mainObjectClass: String, columnCaseClasses: List[String], uniqueKeyCaseClasses: List[String], extraCaseClasses: String)
 case class ForeignKey(from: SimpleColumn, to: SimpleColumn)
+
+// Aggregate generation data structures
+case class ReferenceNode(
+  table: String,
+  foreignKeyColumn: String,
+  children: List[ReferenceNode] = List.empty,
+  isWeakReference: Boolean = false,  // Reference to another aggregate
+  depth: Int = 0
+)
+
+case class ReferenceTree(rootTable: String, nodes: List[ReferenceNode]) {
+  def allTables: List[String] = {
+    def collectTables(nodes: List[ReferenceNode]): List[String] = {
+      nodes.flatMap { node =>
+        node.table :: collectTables(node.children)
+      }
+    }
+    rootTable :: collectTables(nodes)
+  }
+  
+  def flatten: List[ReferenceNode] = {
+    def collectNodes(nodes: List[ReferenceNode]): List[ReferenceNode] = {
+      nodes.flatMap { node =>
+        node :: collectNodes(node.children)
+      }
+    }
+    collectNodes(nodes)
+  }
+}
 
 
 case class SimpleColumn(tableName: String, columnName: String) {
@@ -437,6 +475,9 @@ case class Column(customGen: CustomGenerator,
     if (inheritedFromColumn.isDefined){
       val ic = inheritedFromColumn.get
       ic.toDefn(ic.tableName, includeRef)
+    } else if (shouldUseAttributeType()) {
+      // Use generated AttributeType class
+      getAttributeTypeName()
     } else if (includeRef && references.isDefined){
       // println("HERE1")
       s"${references.get.toType}"
@@ -453,6 +494,9 @@ case class Column(customGen: CustomGenerator,
     if (inheritedFromColumn.isDefined){
       val ic = inheritedFromColumn.get
       ic.toArg(namingStrategy,ic.tableName,includeRef,mutate)
+    } else if (shouldUseAttributeType()) {
+      // Use generated AttributeType class
+      s"${fix(mutate,namingStrategy.column(columnName))}: ${getAttributeTypeName()}"
     } else if (includeRef && references.isDefined){
       s"${fix(mutate,namingStrategy.column(columnName))}: ${makeOption(references.get.toType)}"
     } else if (includeRef && (shouldTypeifyColumn() || incomingReferences.size > 0)){
@@ -486,6 +530,68 @@ case class Column(customGen: CustomGenerator,
     } else {
       shouldTypeifyColumn() || incomingReferences.size > 0
     }
+  }
+  
+  def shouldUseAttributeType(): Boolean = {
+    // Check if this column should use a generated AttributeType
+    // This includes:
+    // 1. Columns with attribute_type schema type
+    // 2. Columns that reference the attributes table attr_type column
+    
+    println(s"shouldUseAttributeType ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
+    
+    val isAttributeTypeColumn = (scalaType == "AttributeType" || scalaType.endsWith(".AttributeType"))
+    val referencesAttributeTable = references.isDefined && references.get.tableName == "attributes" && references.get.columnName == "attr_type"
+    
+    isAttributeTypeColumn || referencesAttributeTable
+  }
+  
+  def getAttributeTypeName(): String = {
+    println(s"getAttributeTypeName ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
+    
+    // Case 1: This is the attr_type column in attributes table
+    if (columnName == "attr_type") {
+      return "AttributeType"
+    }
+    
+    // Case 2: This column references attributes.attr_type
+    if (references.isDefined && references.get.tableName == "attributes" && references.get.columnName == "attr_type") {
+      // Check for explicit mapping from CustomGenerator
+      val tableColumnKey = s"${tableName}.${columnName}"
+      val customMappings = customGen.columnAttributeTypeMappings()
+      
+      customMappings.get(tableColumnKey) match {
+        case Some(attributeTypeName) =>
+          println(s"Found custom attribute type mapping: $tableColumnKey -> $attributeTypeName")
+          return attributeTypeName
+        case None =>
+          println(s"No custom mapping for $tableColumnKey")
+      }
+      
+      // Try to infer from column name patterns
+      val inferredAttrType = if (columnName.endsWith("_type")) {
+        columnName.replace("_type", "").toUpperCase.replace("_", "_") + "_TYPE"
+      } else {
+        // For columns like "source", we can't easily infer the type
+        // Would need constraint analysis or explicit mapping
+        columnName.toUpperCase.replace("_", "_") + "_TYPE" 
+      }
+      
+      // Check if we have a mapping for this inferred attribute type
+      // attributeTypeMapping.get(inferredAttrType) match {
+      //   case Some(className) => 
+      //     println(s"Found inferred attribute type mapping: $inferredAttrType -> $className")
+      //     return className
+      //   case None =>
+      //     println(s"No attribute type mapping found for $inferredAttrType, using generic AttributeType")
+      //     return "AttributeType"
+      // }
+    }
+    
+    // Case 3: This is a direct attribute_type schema column
+    val baseName = columnName.replace("_type", "").split("_").map(_.capitalize).mkString("") + "Type"
+    println(s"getAttributeTypeName result: ${baseName}")
+    baseName
   }
 
   def isAutoColumn(): Boolean = {
@@ -590,7 +696,8 @@ object ConnectionUtils {
   case class Reference(fromTableName: String, fromColName: String, toTableName: String, toColumnName: String, referneceName: String)
 
   def getReferences(db: Connection, tableName: String, idCol: String): List[Reference] = {
-    val tbl = TextUtil.pluralize(tableName).toLowerCase
+    // val tbl = TextUtil.pluralize(tableName).toLowerCase
+    val tbl = tableName.toLowerCase
 
     val sql = s"""
       SELECT
@@ -738,7 +845,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     println("tables:" + tables)
 
-    tables.flatMap { name => 
+    val result = tables.flatMap { name => 
       // val name = row.getString(TABLE_NAME)
       println("Table name: " + name)
 
@@ -786,6 +893,11 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         None
       }
     }.toVector
+    
+    // Set the tables lookup in DefnBuilder for foreign key type resolution
+    DefnBuilder.setTablesLookup(tablesLookup)
+    
+    result
   }
 
   def getColumns(db: Connection,
@@ -1043,6 +1155,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
   }
 
   def cleanupExistingGeneratedFiles() = {
+    println("cleanupExistingGeneratedFiles")
     cleanupExistingGeneratedFilesInFolder(modelsBaseFolder)
     cleanupExistingGeneratedFilesInFolder(modelsBaseFolder+"/events")
     cleanupExistingGeneratedFilesInFolder(persistenceBaseFolder)
@@ -1052,16 +1165,72 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       cleanupExistingGeneratedFilesInFolder(options.repositoriesFolder)
     }
     
+    // Clean aggregates folder if specified
+    println("aggregatesFolder:" + options.aggregatesFolder)
+
+    if (options.aggregatesFolder.nonEmpty) {
+      cleanupExistingGeneratedFilesInFolder(options.aggregatesFolder,true)
+    }
+
+    // FileUtil.createDirectoriesForFolder(aggregateFolder)
+    // FileUtil.createDirectoriesForFolder(s"$aggregateFolder/custom")
+
+    // }
+    
     cleanupExistingGeneratedFilesInFolder(databaseFolder)
     cleanupExistingGeneratedFilesInFolder(databaseFolder+"/tables")
     cleanupExistingGeneratedFilesInFolder(postgresFolder)
     cleanupExistingGeneratedFilesInFolder(postgresFolder+"/tables")
+
+    val persustanceDbTypePath = s"${options.persistenceBaseFolder}/common/src/main/scala/${packageName.replace('.', '/')}/persistence/postgres/"
+    cleanupExistingGeneratedFilesInFolder(persustanceDbTypePath)
+    
   }
 
-  def cleanupExistingGeneratedFilesInFolder(folder: String) = {
-    val f = new File(folder)
-    val scalaFiles = FileUtil.getListOfFiles(f, List("scala"))
+  //   def cleanupExistingGeneratedFilesInFolder(folder: String) = {
+  //   val f = new File(folder)
+  //   val scalaFiles = FileUtil.getListOfFiles(f, List("scala"))
 
+  //   scalaFiles.foreach { scalaFile =>
+  //     val scalaFilePath = scalaFile.getPath
+  //     val content = FileUtil.read(scalaFilePath)
+  //     if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
+  //       println("DELETE FILE:" + scalaFilePath)        
+  //       FileUtil.delete(scalaFilePath)
+  //     } else {
+  //       println("SKIPPING FILE:" + scalaFilePath + ".")
+  //     }
+  //   }
+  //   // println("scalaFiles")
+  // }
+
+  def cleanupExistingGeneratedFilesInFolder(folder: String, recursive: Boolean = false) = {
+    val f = new File(folder)
+    
+    if (recursive) {
+      cleanupExistingGeneratedFilesRecursive(f)
+    } else {
+      val scalaFiles = FileUtil.getListOfFiles(f, List("scala"))
+      
+      println("cleanupExistingGeneratedFilesInFolder:" + folder + " " + scalaFiles.size)
+      scalaFiles.foreach { scalaFile =>
+        val scalaFilePath = scalaFile.getPath
+        val content = FileUtil.read(scalaFilePath)
+        if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
+          println("DELETE FILE:" + scalaFilePath)        
+          FileUtil.delete(scalaFilePath)
+        } else {
+          println("SKIPPING FILE:" + scalaFilePath + ".")
+        }
+      }
+    }
+  }
+  
+  def cleanupExistingGeneratedFilesRecursive(folder: File): Unit = {
+    if (!folder.exists() || !folder.isDirectory) return
+    
+    // Process files in current directory
+    val scalaFiles = FileUtil.getListOfFiles(folder, List("scala"))
     scalaFiles.foreach { scalaFile =>
       val scalaFilePath = scalaFile.getPath
       val content = FileUtil.read(scalaFilePath)
@@ -1072,7 +1241,13 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         println("SKIPPING FILE:" + scalaFilePath + ".")
       }
     }
-    // println("scalaFiles")
+    
+    // Recursively process subdirectories
+    folder.listFiles().foreach { subFile =>
+      if (subFile.isDirectory) {
+        cleanupExistingGeneratedFilesRecursive(subFile)
+      }
+    }
   }
 
   def formatCode(code: String) = {
@@ -1102,8 +1277,121 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   }
 
+  // AttributeType generation from database
+  var generatedAttributeTypes: List[String] = List.empty
+  var attributeTypeMapping: Map[String, String] = Map.empty  // Maps attr_type -> ClassName
+  
+  def queryAttributeTypesFromDatabase(db: Connection): Map[String, List[AttributeTypeData]] = {
+    val sql = "SELECT (attr_type).attr, (attr_type).ident, description FROM attributes ORDER BY ordering"
+    val stmt = db.createStatement()
+    val rs = stmt.executeQuery(sql)
+    
+    val attributeData = results(rs).map { row =>
+      AttributeTypeData(
+        attr = row.getString(1),
+        ident = row.getString(2),
+        description = row.getString(3)
+      )
+    }.toList
+    
+    stmt.close()
+    
+    // Group by attr category (e.g., ENTITY_TYPE -> List of idents)
+    attributeData.groupBy(_.attr)
+  }
+  
+  def generateAttributeTypes(db: Connection): Unit = {
+    println("Generating AttributeTypes from database...")
+    
+    val attributeTypeMap = queryAttributeTypesFromDatabase(db)
+    
+    // Build lists of all classes and objects
+    val allTypeClasses = scala.collection.mutable.ListBuffer[String]()
+    val allTypeObjects = scala.collection.mutable.ListBuffer[String]()
+    
+    attributeTypeMap.foreach { case (attrCategory, values) =>
+      val baseName = TextUtil.snakeToUpperCamel(attrCategory.toLowerCase.replace("_", "_"))
+      val className = if (baseName.endsWith("Type")) baseName else baseName + "Type"
+      val scalaClassName = className.capitalize
+      
+      generatedAttributeTypes = generatedAttributeTypes :+ scalaClassName
+      attributeTypeMapping = attributeTypeMapping + (attrCategory -> scalaClassName)
+      
+      // Build case class definition
+      val caseClassDef = s"case class ${scalaClassName}(ident: String) extends BaseAttributeType {\n  override def attr = \"${attrCategory}\"\n}"
+      allTypeClasses += caseClassDef
+      
+      // Build object with constants
+      val constants = values.map { value =>
+        val constantName = TextUtil.snakeToUpperCamel(value.ident.replace("-", "_"))
+        s"  val ${constantName} = ${scalaClassName}(\"${value.ident}\")"
+      }.mkString("\n")
+      
+      val objectDef = s"object ${scalaClassName}s {\n${constants}\n}"
+      allTypeObjects += objectDef
+    }
+
+    println("attributeTypeMapping")
+    println(attributeTypeMapping)
+    
+    // Generate combined files
+    generateAllAttributeTypesFile(allTypeClasses.toList)
+    generateAllAttributeObjectsFile(allTypeObjects.toList)
+    generatePostgresDbTypesEncoder()
+    
+    println(s"Generated ${generatedAttributeTypes.size} AttributeType classes: ${generatedAttributeTypes.mkString(", ")}")
+  }
+  
+  def generateAllAttributeTypesFile(typeDefinitions: List[String]): Unit = {
+    try {
+      val attributesFolder = modelsBaseFolder//.replace("/shared/","/shared-common/")
+      println(s"Generating combined AttributeTypes.scala with ${typeDefinitions.size} types")
+      println(s"attributesFolder is: ${attributesFolder}")
+      val content = GeneratorTemplates.allAttributeTypesTemplate(packageName, typeDefinitions)
+      val formattedContent = formatCode(content)
+      val filePath = s"${attributesFolder}/AttributeTypes.scala"
+      
+      println(s"Writing AttributeTypes file to: ${filePath}")
+      FileUtil.createDirectoriesForFile(filePath)
+      FileUtil.write(filePath, formattedContent) // Always overwrite
+      println(s"Successfully generated AttributeTypes.scala at ${filePath}")
+    } catch {
+      case ex: Exception =>
+        println(s"Error generating AttributeTypes file: ${ex.getMessage}")
+        ex.printStackTrace()
+    }
+  }
+  
+  def generateAllAttributeObjectsFile(objectDefinitions: List[String]): Unit = {
+    try {
+      val attributesFolder = modelsBaseFolder//.replace("/shared/","/shared-common/")
+      println(s"Generating combined AttributeObjects.scala with ${objectDefinitions.size} objects")
+      val content = GeneratorTemplates.allAttributeObjectsTemplate(packageName, objectDefinitions)
+      val formattedContent = formatCode(content)  
+      val filePath = s"${attributesFolder}/AttributeObjects.scala"
+      
+      println(s"Writing AttributeObjects file to: ${filePath}")
+      FileUtil.createDirectoriesForFile(filePath)
+      FileUtil.write(filePath, formattedContent) // Always overwrite
+      println(s"Successfully generated AttributeObjects.scala")
+    } catch {
+      case ex: Exception =>
+        println(s"Error generating AttributeObjects file: ${ex.getMessage}")
+        ex.printStackTrace()
+    }
+  }
+  
+  def generatePostgresDbTypesEncoder(): Unit = {
+    val content = GeneratorTemplates.postgresCustomEncoderTemplate(packageName, generatedAttributeTypes)
+    val formattedContent = formatCode(content)
+    val filePath = s"${options.persistenceBaseFolder}/common/src/main/scala/${packageName.replace('.', '/')}/persistence/postgres/PostgresDbTypesEncoder.scala"
+    
+    FileUtil.createDirectoriesForFile(filePath)
+    FileUtil.write(filePath, formattedContent) // Always overwrite
+  }
+
   def internalTypes(): List[String] = {
-    List(
+    generatedAttributeTypes ++ List(
       // "CorrelationId"
     )
   }
@@ -1178,6 +1466,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     // val namingStrategy = GeneratorNamingStrategy
     // val codegen = CodeGenerator(codegenOptions, namingStrategy)
 
+    cleanupExistingGeneratedFiles()
 
     val plainForeignKeys = getForeignKeys(db)
 
@@ -1198,14 +1487,16 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     println(foreignKeys)
 
-    val tables = getTables(db, foreignKeys)
+    // Generate AttributeTypes FIRST - this must run before other generation
+    generateAttributeTypes(db)
+
+    val allTables = getTables(db, foreignKeys)
+
+    val tables = allTables.filter { _.name != "attributes" }.toList
 
     val simpleCaseClasses = generateCaseCasses(tables).toList
 
     println(simpleCaseClasses)
-
-
-    cleanupExistingGeneratedFiles()
 
     val sharedModelTypes = MList.empty[String]
     val sharedModels = MList.empty[String]
@@ -1267,6 +1558,14 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     println("generateEvents:" + options.generateEvents)
     if (options.generateEvents) {
       generateModelEvents(tables)
+    }
+
+    println("generateAggregates:" + options.generateAggregates)
+    if (options.generateAggregates && options.aggregateRootTables.nonEmpty) {
+      println(s"Generating ${options.aggregateRootTables.size} aggregate roots: ${options.aggregateRootTables.mkString(", ")}")
+      options.aggregateRootTables.foreach { rootTable =>
+        generateAggregateRoot(rootTable, "id", options.maxAggregateDepth)
+      }
     }
 
 
@@ -1361,75 +1660,698 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   // case class Reference(tableName: String, columnName: String)
 
-  def generateAggregateRoot(rootTable: String, uniqueId: String) = {
-    val codegenOptions = options
-
-    // codegenOptions.file.foreach { x =>
-    //   outstream.println("Starting...")
-    // }
-
+  def generateAggregateRoot(rootTableName: String, uniqueId: String = "id", maxDepth: Int = 3): Unit = {
     val startTime = System.currentTimeMillis()
-    Class.forName(codegenOptions.jdbcDriver)
-    val db: Connection =
-      DriverManager.getConnection(codegenOptions.url,
-                                  codegenOptions.user,
-                                  codegenOptions.password)
-
-
-    val references = ConnectionUtils.getReferences(db,rootTable,uniqueId)
-
-    println(references)
-
-    val namingStrategy = GeneratorNamingStrategy
-
-    // val scalaTableName = namingStrategy.table(rootTable)
-
-    val tableCounts = references.groupBy(_.fromTableName).mapValues(_.size)
-
-    val className = rootTable.split("_").map(_.capitalize).mkString
-    val fieldName = rootTable.split("_").map(_.toLowerCase).mkString    
-
-    val baseClass = s"""
-        |// Aggregate Root: ${className}
-        |case class ${className}Root(
-        |    ${fieldName.toLowerCase}: ${className},
-        """
-
-    // val referenceClasses = references.map { ref =>
-    //   val className = ref.fromTableName.split("_").map(_.capitalize).mkString
-    //   s"case class $className(entityId: UUID, someData: String) // Example field"
-    // }.mkString("\n")
-    val referenceClasses = ""
-
-    val referenceFields = references.map { ref =>
-      // val baseName = ref.fromTableName.split("_").map(_.toLowerCase).mkString
-      val baseName = if (tableCounts(ref.fromTableName) > 1) {
-        //the convntion of using _id
-        val cleanedColName = ref.fromColName.toLowerCase.replace("_entity_id","").replace("_id","")
-        // s"${cleanedColName.toLowerCase}_${ref.fromTableName.toLowerCase}"
-        val merged = mergeOnFullWord(cleanedColName.toLowerCase,ref.fromTableName.toLowerCase)
-        merged
-      } else {
-        ref.fromTableName.toLowerCase
+    Class.forName(options.jdbcDriver)
+    val db: Connection = DriverManager.getConnection(options.url, options.user, options.password)
+    
+    try {
+      println(s"Generating aggregate root for table: $rootTableName")
+      
+      // 1. Build reference tree starting from root table
+      val referenceTree = buildReferenceTree(db, rootTableName, maxDepth)
+      println(s"Reference tree: $referenceTree")
+      
+      // 2. Generate aggregate state class
+      val aggregateName = namingStrategy.table(rootTableName)
+      val baseStateCode = generateBaseAggregateState(rootTableName, referenceTree)
+      
+      // 3. Generate event handlers
+      val eventHandlerCode = generateAggregateEventHandler(rootTableName, referenceTree)
+      
+      // 4. Generate state repository
+      val stateRepositoryCode = generateAggregateStateRepository(rootTableName, referenceTree)
+      
+      // 5. Write files for this aggregate
+      writeAggregateFiles(aggregateName, baseStateCode, eventHandlerCode, stateRepositoryCode)
+      
+      // 6. Optionally generate Pekko Persistence actor
+      if (options.generatePekkoActors) {
+        val pekkoActorCode = generatePekkoAggregateActor(rootTableName, referenceTree)
+        writeAggregateActor(aggregateName, pekkoActorCode)
       }
+      
+      val endTime = System.currentTimeMillis()
+      println(s"Generated aggregate $aggregateName in ${endTime - startTime}ms")
+      
+    } finally {
+      db.close()
+    }
+  }
+  
+  def buildReferenceTree(db: Connection, rootTableName: String, maxDepth: Int): ReferenceTree = {
+    
+    def isLikelyAggregateRoot(tableName: String): Boolean = {
+      val rootPatterns = options.aggregateRootTables
+      rootPatterns.contains(tableName.toLowerCase) ||
+      options.aggregateBoundaryHints.getOrElse(tableName, false)
+    }
+    
+    def traverse(tableName: String, depth: Int, visited: Set[String]): List[ReferenceNode] = {
+      if (depth >= maxDepth || visited.contains(tableName)) {
+        return List.empty
+      }
+      
+      val refs = ConnectionUtils.getReferences(db, tableName, "id")
+      
+      refs.flatMap { ref =>
+        // Stop traversal at other aggregate boundaries (unless it's depth 0, i.e., the root)
+        if (depth > 0 && isLikelyAggregateRoot(ref.fromTableName)) {
+          // Just store the ID reference, don't traverse deeper
+          Some(ReferenceNode(
+            table = ref.fromTableName,
+            foreignKeyColumn = ref.fromColName,
+            children = List.empty,
+            isWeakReference = true,
+            depth = depth
+          ))
+        } else {
+          // Continue traversing within this aggregate
+          Some(ReferenceNode(
+            table = ref.fromTableName,
+            foreignKeyColumn = ref.fromColName,
+            children = traverse(ref.fromTableName, depth + 1, visited + tableName),
+            isWeakReference = false,
+            depth = depth
+          ))
+        }
+      }
+    }
+    
+    ReferenceTree(rootTableName, traverse(rootTableName, 0, Set.empty))
+  }
+  
+  def generateBaseAggregateState(rootTableName: String, tree: ReferenceTree): String = {
+    val aggregateName = namingStrategy.table(rootTableName)
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+    
+    // Direct children (store as List[EntityId])
+    val directRefs = tree.nodes.filter(node => node.depth == 0)
+    val directIdFields = directRefs.map { ref =>
+      if (ref.isWeakReference) {
+        // Weak reference to another aggregate - just store the IDs
+        // ref.table is already plural, so don't pluralize again
+        s"  ${ref.table}Ids: List[${namingStrategy.table(singularize(ref.table))}Id] = List.empty"
+      } else {
+        // Strong reference within this aggregate
+        // ref.table is already plural, so don't pluralize again
+        s"  ${ref.table}Ids: List[${namingStrategy.table(singularize(ref.table))}Id] = List.empty"
+      }
+    }
+    
+    // Nested Maps for children of children (e.g., postComments: Map[PostId, List[CommentId]])
+    val nestedMaps = tree.nodes.flatMap { parentNode =>
+      if (!parentNode.isWeakReference) {
+        parentNode.children.filter(child => !child.isWeakReference).map { childNode =>
+          val parentId = s"${namingStrategy.table(singularize(parentNode.table))}Id"
+          val childId = s"${namingStrategy.table(singularize(childNode.table))}Id"
+          // Fix: Use singular parent table name + plural child table name (already plural)
+          s"  ${singularize(parentNode.table)}${namingStrategy.table(childNode.table)}: Map[$parentId, List[$childId]] = Map.empty"
+        }
+      } else {
+        List.empty
+      }
+    }
+    
+    val allFields = directIdFields ++ nestedMaps
+    val fieldsString = {
+      val metadataComment = ",\n  \n  // Event sourcing metadata"
+      if (allFields.nonEmpty) {
+        val childrenSection = ",\n  \n  // Direct children\n" + allFields.mkString(",\n")
+        childrenSection + metadataComment
+      } else {
+        metadataComment
+      }
+    }
+    
+    s"""package ${options.packageName}.aggregates.${rootEntityFieldName}
 
-      // val fieldName = baseName.split("_").map(_.capitalize).mkString
-      val fieldName = namingStrategy.column(baseName)
+${GeneratorTemplates.autoGeneratedComment}
 
-      // singularize(s)
-      val className = singularize(ref.fromTableName).split("_").map(_.capitalize).mkString
-      s"    $fieldName: List[$className] = List.empty,"
+//import scala.concurrent.Future
+//import monix.eval.Task
+import escalator.ddd.Event
+import escalator.models.CorrelationId
+import escalator.util.Timestamp
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+
+/**
+ * Base aggregate state for ${aggregateName}
+ * Contains the root entity plus IDs of all related entities
+ */
+case class Base${aggregateName}State(
+  ${rootEntityFieldName}: Option[${aggregateName}] = None${fieldsString}
+  version: Long = 0L,
+  lastUpdated: Timestamp = Timestamp(0L)
+) {
+  /**
+   * Apply an event to update the aggregate state
+   */
+  def applyEvent(event: Event): Base${aggregateName}State = event match {
+    case e: ${aggregateName}Event => ${aggregateName}EventHandler.apply(this, e)${generateEventMatchCases(tree, aggregateName)}
+    case _ => this  // Ignore unrelated events
+  }
+}
+
+object Base${aggregateName}State {
+  def empty(${rootEntityFieldName}Id: ${aggregateName}Id): Base${aggregateName}State = {
+    Base${aggregateName}State(
+      ${rootEntityFieldName} = None,
+      version = 0L,
+      lastUpdated = Timestamp(0L)
+    )
+  }
+}
+"""
+  }
+  
+  def generateEventMatchCases(tree: ReferenceTree, aggregateName: String): String = {
+    val eventCases = tree.nodes.filter(node => !node.isWeakReference).map { node =>
+      val eventName = namingStrategy.table(singularize(node.table))
+      s"""
+    case e: ${eventName}Event => ${aggregateName}EventHandler.apply(this, e)"""
+    }
+    eventCases.mkString
+  }
+  
+  def generateAggregateEventHandler(rootTableName: String, tree: ReferenceTree): String = {
+    val aggregateName = namingStrategy.table(rootTableName)
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+    
+    // Generate handler methods for each event type
+    val rootEventHandler = generateRootEventHandler(rootTableName, aggregateName)
+    val childEventHandlers = tree.nodes.filter(node => !node.isWeakReference).map { node =>
+      generateChildEventHandler(rootTableName, node, tree, aggregateName)
     }.mkString("\n")
+    
+    s"""package ${options.packageName}.aggregates.${rootEntityFieldName}
 
-    val caseClassEnd = ")"
+${GeneratorTemplates.autoGeneratedComment}
 
-    val rootClass = s"$referenceClasses\n\n$baseClass\n$referenceFields\n$caseClassEnd"
+import escalator.ddd.Event
+import escalator.models.CorrelationId
+import escalator.util.Timestamp
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
 
-    println("generateAggregateRoot " + rootTable + " " + uniqueId)
-    println(rootClass)
+/**
+ * Pure event handlers for ${aggregateName} aggregate
+ * These are side-effect free functions for applying events to state
+ */
+object ${aggregateName}EventHandler {
+  
+$rootEventHandler
+  
+$childEventHandlers
+}
+"""
+  }
+  
+  def generateRootEventHandler(rootTableName: String, aggregateName: String): String = {
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+    s"""  /**
+   * Handle events for the root ${aggregateName} entity
+   */
+  def apply(state: Base${aggregateName}State, event: ${aggregateName}Event): Base${aggregateName}State = {
+    event match {
+      case ${aggregateName}Created($rootEntityFieldName, _, correlationId, timestamp) =>
+        state.copy(
+          $rootEntityFieldName = Some($rootEntityFieldName),
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+        
+      case ${aggregateName}Updated($rootEntityFieldName, previous${aggregateName}, _, correlationId, timestamp) =>
+        state.copy(
+          $rootEntityFieldName = Some($rootEntityFieldName),
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+        
+      case ${aggregateName}Deleted($rootEntityFieldName, _, correlationId, timestamp) =>
+        // Mark as deleted by setting to None
+        state.copy(
+          $rootEntityFieldName = None,
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+    }
+  }"""
+  }
+  
+  def generateChildEventHandler(rootTableName: String, node: ReferenceNode, tree: ReferenceTree, aggregateName: String): String = {
+    val childName = namingStrategy.table(singularize(node.table))
+    val childNameLower = node.table.toLowerCase
+    val foreignKeyCheck = generateForeignKeyCheck(node, rootTableName)
+    val nestedUpdates = generateNestedUpdates(node, tree)
+    val depthDescription = if (node.depth == 0) "direct children" else s"depth ${node.depth}"
+    
+    s"""  /**
+   * Handle events for ${childName} entities ($depthDescription)
+   */
+  def apply(state: Base${aggregateName}State, event: ${childName}Event): Base${aggregateName}State = {
+    event match {
+      case ${childName}Created(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
+        state.copy(
+          ${node.table}Ids = state.${node.table}Ids :+ ${childNameLower}.id,
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+        
+      case ${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $foreignKeyCheck =>
+        // No ID changes needed for updates
+        state.copy(
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+        
+      case ${childName}Deleted(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
+        state.copy(
+          ${node.table}Ids = state.${node.table}Ids.filterNot(_ == ${childNameLower}.id),$nestedUpdates
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )
+        
+      case _ => state  // Event not relevant to this aggregate
+    }
+  }"""
+  }
+  
+  def generateForeignKeyCheck(node: ReferenceNode, rootTableName: String): String = {
+    if (node.depth == 0) {
+      // Direct child - check against root entity ID (now Optional)
+      val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+      // Convert database column name (user_id) to Scala property name (userId)
+      val scalaPropertyName = namingStrategy.column(node.foreignKeyColumn)
+      s"state.$rootEntityFieldName.exists(_.id == ${node.table.toLowerCase}.$scalaPropertyName)"
+    } else {
+      // Nested child - check if parent is in our collection
+      val parentTable = findParentTable(node, rootTableName)
+      val parentIdField = parentTable + "Ids"  // parentTable is already plural
+      // Convert database column name to Scala property name
+      val scalaPropertyName = namingStrategy.column(node.foreignKeyColumn)
+      s"state.$parentIdField.contains(${node.table.toLowerCase}.$scalaPropertyName)"
+    }
+  }
+  
+  def generateNestedUpdates(node: ReferenceNode, tree: ReferenceTree): String = {
+    if (node.children.nonEmpty) {
+      val childCleanups = node.children.map { child =>
+        // Use singular parent + plural child naming
+        val mapField = s"${singularize(node.table)}${namingStrategy.table(child.table)}"
+        s"$mapField = state.$mapField - ${node.table.toLowerCase}.id"
+      }
+      "\n          " + childCleanups.mkString(",\n          ") + ","
+    } else {
+      ""
+    }
+  }
+  
+  def findParentTable(node: ReferenceNode, rootTableName: String): String = {
+    // This is a simplified approach - in a full implementation,
+    // you'd need to traverse the tree to find the actual parent
+    rootTableName
+  }
+  
+  def generateAggregateStateRepository(rootTableName: String, tree: ReferenceTree): String = {
+    val aggregateName = namingStrategy.table(rootTableName)
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+    
+    // Generate repository dependencies (existing repositories for each table)
+    val repoDependencies = (rootTableName :: tree.allTables.filter(table => table != rootTableName)).map { tableName =>
+      val repoName = s"${pluralize(namingStrategy.table(tableName))}Repository"
+      s"  ${tableName.toLowerCase}Repo: $repoName"
+    }.mkString(",\n")
+    
+    // Generate loading logic for each level
+    val loadingLogic = generateStateLoadingLogic(rootTableName, tree, aggregateName)
+    
+    s"""package ${options.packageName}.aggregates.${rootEntityFieldName}
+
+${GeneratorTemplates.autoGeneratedComment}
+
+import scala.concurrent.{ExecutionContext, Future}
+import com.typesafe.scalalogging.Logger
+import escalator.ddd.Event
+import escalator.models.CorrelationId
+import escalator.util.{Timestamp, TimeUtil}
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+import ${options.packageName}.core.repositories.postgres._
+
+import monix.eval.Task
+import escalator.util.monix.TaskSyntax._
 
 
-    db.close()
+/**
+ * Repository for loading and managing ${aggregateName} aggregate state
+ * Supports both DB bootstrapping and event replay
+ */
+class ${aggregateName}StateRepository(
+$repoDependencies
+)(implicit ec: ExecutionContext, logger: Logger) {
+  
+  /**
+   * Load complete aggregate state from database
+   */
+  def load${aggregateName}State(${rootEntityFieldName}Id: ${aggregateName}Id): Task[Option[Base${aggregateName}State]] = {
+$loadingLogic
+  }
+  
+  /**
+   * Load multiple states efficiently
+   */
+  def load${aggregateName}States(ids: List[${aggregateName}Id]): Task[Map[${aggregateName}Id, Base${aggregateName}State]] = {
+    Task.sequence(ids.map { id =>
+      load${aggregateName}State(id).map(stateOpt => id -> stateOpt)
+    }).map(_.collect { case (id, Some(state)) => id -> state }.toMap)
+  }
+  
+  /**
+   * Replay events to rebuild state (Pekko Persistence compatible)
+   */
+  def replay${aggregateName}State(${rootEntityFieldName}Id: ${aggregateName}Id, fromSequenceNr: Long = 0L): Task[Base${aggregateName}State] = {
+    // This method would integrate with your event store
+    // For now, return empty state as placeholder
+    Task.pure(Base${aggregateName}State.empty(${rootEntityFieldName}Id))
+  }
+  
+  /**
+   * Apply events to state in sequence
+   */
+  def applyEvents(initialState: Base${aggregateName}State, events: List[Event]): Base${aggregateName}State = {
+    events.foldLeft(initialState)(_.applyEvent(_))
+  }
+}
+
+object ${aggregateName}StateRepository {
+  def apply(
+$repoDependencies
+  )(implicit ec: ExecutionContext, logger: Logger): ${aggregateName}StateRepository = 
+    new ${aggregateName}StateRepository(${(rootTableName :: tree.allTables.filter(table => table != rootTableName)).map(t => s"${t.toLowerCase}Repo").mkString(", ")})
+}
+"""
+  }
+  
+  def generateStateLoadingLogic(rootTableName: String, tree: ReferenceTree, aggregateName: String): String = {
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+    s"""    for {
+      // Load root entity
+      ${rootEntityFieldName}Opt <- Task.fromFuture(${rootTableName.toLowerCase}Repo.getById(${rootEntityFieldName}Id))
+      
+      state <- ${rootEntityFieldName}Opt match {
+        case None => Task.pure(None)
+        case Some(${rootEntityFieldName}) =>
+          for {
+${generateDirectChildrenLoading(tree)}
+${generateNestedChildrenLoading(tree)}
+            
+          } yield Some(Base${aggregateName}State(
+            ${rootEntityFieldName} = Some(${rootEntityFieldName}),
+${generateStateConstruction(tree)}
+            version = 0L,
+            lastUpdated = TimeUtil.nowTimestamp()
+          ))
+      }
+    } yield state"""
+  }
+  
+  def generateDirectChildrenLoading(tree: ReferenceTree): String = {
+    val directChildren = tree.nodes.filter(node => node.depth == 0 && !node.isWeakReference)
+    if (directChildren.nonEmpty) {
+      val loadingTasks = directChildren.map { node =>
+        // node.table is already plural, don't pluralize again
+        val tableName = node.table
+        val foreignKeyMethodName = s"getBy${namingStrategy.table(node.foreignKeyColumn).capitalize}"
+        s"Task.fromFuture(${tableName.toLowerCase}Repo.${foreignKeyMethodName}(${singularize(tree.rootTable.toLowerCase)}Id))"
+      }
+      
+      if (directChildren.size == 1) {
+        // Single task - no need for parMap
+        s"""            // Load direct children
+            ${directChildren.head.table} <- ${loadingTasks.head}"""
+      } else {
+        // Multiple tasks - use parMapN (up to 10) or parSequence
+        val taskCount = directChildren.size
+        if (taskCount >= 2 && taskCount <= 10) {
+          val paramNames = directChildren.zipWithIndex.map { case (_, i) => s"p$i" }
+          val combiningFunction = s"((${paramNames.mkString(", ")}) => (${paramNames.mkString(", ")}))"
+          s"""            // Load direct children in parallel
+            (${directChildren.map(_.table).mkString(", ")}) <- Task.parMap$taskCount(
+              ${loadingTasks.mkString(",\n              ")}
+            )$combiningFunction"""
+        } else {
+          s"""            // Load direct children in parallel - many children (${taskCount})
+            allChildren <- Task.parSequence(List(
+              ${loadingTasks.mkString(",\n              ")}
+            ))
+            (${directChildren.map(_.table).mkString(", ")}) = (${directChildren.zipWithIndex.map { case (_, i) => s"allChildren($i)" }.mkString(", ")})"""
+        }
+      }
+    } else {
+      "            // No direct children to load"
+    }
+  }
+  
+  def generateNestedChildrenLoading(tree: ReferenceTree): String = {
+    val nestedNodes = tree.nodes.filter(node => node.children.nonEmpty)
+    if (nestedNodes.nonEmpty) {
+      val loadingLogic = nestedNodes.map { parentNode =>
+        parentNode.children.map { childNode =>
+          // Both parentNode.table and childNode.table are already plural
+          s"""            // Load ${childNode.table} for each ${parentNode.table}
+            ${parentNode.table}${namingStrategy.table(childNode.table)}Map <- if (${parentNode.table}.nonEmpty) {
+              Task.fromFuture(${childNode.table.toLowerCase}Repo.getBy${namingStrategy.table(childNode.foreignKeyColumn).capitalize}s(${parentNode.table}.map(_.id)))
+                .map(_.groupBy(_.${namingStrategy.column(childNode.foreignKeyColumn)}).map { case (k, v) => k -> v.map(_.id) }.asInstanceOf[Map[${namingStrategy.table(childNode.foreignKeyColumn.replace("_id", "").split("_").map(_.capitalize).mkString)}Id, List[${namingStrategy.table(childNode.table.replace("s$", "")).capitalize}Id]]])
+            } else {
+              Task.pure(Map.empty[${namingStrategy.table(childNode.foreignKeyColumn.replace("_id", "").split("_").map(_.capitalize).mkString)}Id, List[${namingStrategy.table(childNode.table.replace("s$", "")).capitalize}Id]])
+            }"""
+        }.mkString("\n")
+      }.mkString("\n")
+      
+      s"""            // Load nested children
+$loadingLogic"""
+    } else {
+      ""
+    }
+  }
+  
+  def generateStateConstruction(tree: ReferenceTree): String = {
+    val directChildIds = tree.nodes.filter(node => node.depth == 0 && !node.isWeakReference).map { node =>
+      // node.table is already plural
+      s"            ${node.table}Ids = ${node.table}.map(_.id),"
+    }
+    
+    val nestedMaps = tree.nodes.filter(node => node.children.nonEmpty).flatMap { parentNode =>
+      parentNode.children.map { childNode =>
+        // Both tables are already plural, use singular parent + plural child naming
+        s"            ${singularize(parentNode.table)}${namingStrategy.table(childNode.table)} = ${parentNode.table}${namingStrategy.table(childNode.table)}Map,"
+      }
+    }
+    
+    (directChildIds ++ nestedMaps).mkString("\n")
+  }
+  
+  def writeAggregateFiles(aggregateName: String, baseStateCode: String, eventHandlerCode: String, stateRepositoryCode: String): Unit = {
+    val aggregateFolder = if (options.aggregatesFolder.nonEmpty) {
+      s"${options.aggregatesFolder}/${aggregateName.toLowerCase}"
+    } else {
+      s"${options.persistenceBaseFolder}/aggregates/${aggregateName.toLowerCase}"
+    }
+    
+    FileUtil.createDirectoriesForFolder(aggregateFolder)
+    FileUtil.createDirectoriesForFolder(s"$aggregateFolder/custom")
+    
+    // Write generated files
+    writeIfDoesNotExist(s"$aggregateFolder/Base${aggregateName}State.scala", formatCode(baseStateCode))
+    writeIfDoesNotExist(s"$aggregateFolder/${aggregateName}EventHandler.scala", formatCode(eventHandlerCode))
+    writeIfDoesNotExist(s"$aggregateFolder/${aggregateName}StateRepository.scala", formatCode(stateRepositoryCode))
+    
+    // Write custom extension files (only if they don't exist)
+    val customStateCode = generateCustomStateTemplate(aggregateName)
+    writeIfDoesNotExist(s"$aggregateFolder/custom/${aggregateName}State.scala", formatCode(customStateCode))
+    
+    val customLogicCode = generateCustomLogicTemplate(aggregateName)
+    writeIfDoesNotExist(s"$aggregateFolder/custom/${aggregateName}BusinessLogic.scala", formatCode(customLogicCode))
+  }
+  
+  def generateCustomStateTemplate(aggregateName: String): String = {
+    s"""package ${options.packageName}.aggregates.${aggregateName.toLowerCase}.custom
+
+// This file is never overwritten by the generator
+// Add your custom state extensions and business logic here
+
+import ${options.packageName}.aggregates.${aggregateName.toLowerCase}.Base${aggregateName}State
+import ${options.packageName}.models._
+
+/**
+ * Extended ${aggregateName} state with custom business logic
+ * Extend Base${aggregateName}State and add your domain-specific methods
+ */
+case class ${aggregateName}State(base: Base${aggregateName}State) {
+  
+  // Delegate to base state
+  def ${aggregateName.toLowerCase} = base.${aggregateName.toLowerCase}
+  def version = base.version
+  def lastUpdated = base.lastUpdated
+  
+  // Add your custom computed properties here
+  // Example:
+  // def totalPosts: Int = base.postsIds.size
+  // def isActive: Boolean = base.user.status == "active"
+  
+  // Add your custom business logic methods here
+  // Example:
+  // def canCreatePost: Boolean = isActive && totalPosts < 100
+}
+
+object ${aggregateName}State {
+  def fromBase(baseState: Base${aggregateName}State): ${aggregateName}State = 
+    ${aggregateName}State(baseState)
+}
+"""
+  }
+  
+  def generateCustomLogicTemplate(aggregateName: String): String = {
+    s"""package ${options.packageName}.aggregates.${aggregateName.toLowerCase}.custom
+
+// This file is never overwritten by the generator
+// Add your custom business logic and domain services here
+
+import scala.concurrent.Future
+import monix.eval.Task
+import escalator.ddd.Event
+import ${options.packageName}.aggregates.${aggregateName.toLowerCase}.Base${aggregateName}State
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+
+/**
+ * Business logic for ${aggregateName} aggregate
+ * Add your domain-specific operations here
+ */
+class ${aggregateName}BusinessLogic {
+  
+  /**
+   * Example business rule validation
+   */
+  def validate${aggregateName}Creation(data: ${aggregateName}): Task[Either[String, ${aggregateName}]] = {
+    // Add your validation logic here
+    Task.pure(Right(data))
+  }
+  
+  /**
+   * Example business operation
+   */
+  def process${aggregateName}Command(state: Base${aggregateName}State, command: Any): Task[List[Event]] = {
+    // Add your command processing logic here
+    Task.pure(List.empty)
+  }
+  
+  // Add more business logic methods as needed
+}
+
+object ${aggregateName}BusinessLogic {
+  def apply(): ${aggregateName}BusinessLogic = new ${aggregateName}BusinessLogic()
+}
+"""
+  }
+  
+  def writeAggregateActor(aggregateName: String, pekkoActorCode: String): Unit = {
+    val aggregateFolder = if (options.aggregatesFolder.nonEmpty) {
+      s"${options.aggregatesFolder}/${aggregateName.toLowerCase}"
+    } else {
+      s"${options.persistenceBaseFolder}/aggregates/${aggregateName.toLowerCase}"
+    }
+    
+    writeIfDoesNotExist(s"$aggregateFolder/${aggregateName}Aggregate.scala", formatCode(pekkoActorCode))
+  }
+  
+  def generatePekkoAggregateActor(rootTableName: String, tree: ReferenceTree): String = {
+    val aggregateName = namingStrategy.table(rootTableName)
+    
+    s"""package ${options.packageName}.aggregates.${rootTableName.toLowerCase}
+
+${GeneratorTemplates.autoGeneratedComment}
+
+import org.apache.pekko.actor.typed.{ActorRef, Behavior}
+import org.apache.pekko.persistence.typed.{PersistenceId, RecoveryCompleted}
+import org.apache.pekko.persistence.typed.scaladsl.{Effect, EventSourcedBehavior, ReplyEffect}
+import escalator.ddd.{Command, Event}
+import escalator.models.CorrelationId
+import escalator.util.{Timestamp, TimeUtil}
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+
+/**
+ * Pekko Persistence EventSourced actor for ${aggregateName} aggregate
+ */
+object ${aggregateName}Aggregate {
+  
+  // Commands
+  sealed trait ${aggregateName}Command extends Command
+  
+  case class Create${aggregateName}(
+    data: ${aggregateName},
+    correlationId: CorrelationId,
+    replyTo: ActorRef[${aggregateName}Reply]
+  ) extends ${aggregateName}Command
+  
+  case class Update${aggregateName}(
+    data: ${aggregateName},
+    correlationId: CorrelationId,
+    replyTo: ActorRef[${aggregateName}Reply]
+  ) extends ${aggregateName}Command
+  
+  case class Get${aggregateName}State(
+    replyTo: ActorRef[${aggregateName}StateReply]
+  ) extends ${aggregateName}Command
+  
+  // Replies
+  sealed trait ${aggregateName}Reply
+  case class ${aggregateName}Created(${rootTableName.toLowerCase}: ${aggregateName}) extends ${aggregateName}Reply
+  case class ${aggregateName}Updated(${rootTableName.toLowerCase}: ${aggregateName}) extends ${aggregateName}Reply
+  case class ${aggregateName}Error(message: String) extends ${aggregateName}Reply
+  
+  case class ${aggregateName}StateReply(state: Base${aggregateName}State)
+  
+  def apply(${rootTableName.toLowerCase}Id: ${aggregateName}Id): Behavior[${aggregateName}Command] = {
+    EventSourcedBehavior[${aggregateName}Command, Event, Base${aggregateName}State](
+      persistenceId = PersistenceId.ofUniqueId(s"${aggregateName}-$${${rootTableName.toLowerCase}Id.value}"),
+      emptyState = Base${aggregateName}State.empty(${rootTableName.toLowerCase}Id),
+      commandHandler = commandHandler,
+      eventHandler = eventHandler
+    )
+  }
+  
+  private def commandHandler: (Base${aggregateName}State, ${aggregateName}Command) => ReplyEffect[Event, Base${aggregateName}State] = {
+    (state, command) => command match {
+      case Create${aggregateName}(data, correlationId, replyTo) =>
+        if (state.version == 0L) {
+          Effect.persist(${aggregateName}Created(data, data.id, correlationId, TimeUtil.nowTimestamp()))
+            .thenReply(replyTo)(_ => ${aggregateName}Created(data))
+        } else {
+          Effect.reply(replyTo)(${aggregateName}Error("${aggregateName} already exists"))
+        }
+        
+      case Update${aggregateName}(data, correlationId, replyTo) =>
+        if (state.version > 0L) {
+          Effect.persist(${aggregateName}Updated(data, Some(state.${rootTableName.toLowerCase}), data.id, correlationId, TimeUtil.nowTimestamp()))
+            .thenReply(replyTo)(_ => ${aggregateName}Updated(data))
+        } else {
+          Effect.reply(replyTo)(${aggregateName}Error("${aggregateName} does not exist"))
+        }
+        
+      case Get${aggregateName}State(replyTo) =>
+        Effect.reply(replyTo)(${aggregateName}StateReply(state))
+    }
+  }
+  
+  private def eventHandler: (Base${aggregateName}State, Event) => Base${aggregateName}State = {
+    (state, event) => state.applyEvent(event)
+  }
+}
+"""
   }
 
   def mergeOnFullWord(s1: String, s2: String): String = {
@@ -1498,7 +2420,67 @@ object CodeGenerator {
     val codegen = CodeGenerator(codegenOptions, namingStrategy, customGen)
 
     codegen.generateAggregateRoot(rootTable,uniqueId)
-  }  
+  }
+  
+  /**
+   * Generate a single aggregate root from a specific table
+   */
+  def generateAggregate(codegenOptions: CodegenOptions, customGen: CustomGenerator, rootTableName: String, maxDepth: Int = 3): Unit = {
+    customGen.setup()
+    
+    val namingStrategy = GeneratorNamingStrategy
+    val codegen = CodeGenerator(codegenOptions, namingStrategy, customGen)
+    
+    codegen.generateAggregateRoot(rootTableName, "id", maxDepth)
+  }
+  
+  /**
+   * Generate all configured aggregate roots
+   */
+  def generateAggregates(codegenOptions: CodegenOptions, customGen: CustomGenerator): Unit = {
+    if (!codegenOptions.generateAggregates || codegenOptions.aggregateRootTables.isEmpty) {
+      println("Aggregate generation disabled or no root tables configured")
+      return
+    }
+    
+    println(s"Generating ${codegenOptions.aggregateRootTables.size} aggregate roots: ${codegenOptions.aggregateRootTables.mkString(", ")}")
+    
+    codegenOptions.aggregateRootTables.foreach { rootTable =>
+      generateAggregate(codegenOptions, customGen, rootTable, codegenOptions.maxAggregateDepth)
+    }
+  }
+  
+  /**
+   * Clean aggregate files
+   */
+  // def resetAggregates(codegenOptions: CodegenOptions, customGen: CustomGenerator): Unit = {
+  //   if (codegenOptions.aggregatesFolder.nonEmpty) {
+  //     println(s"Cleaning aggregate files in ${codegenOptions.aggregatesFolder}")
+  //     cleanupAggregateFiles(codegenOptions.aggregatesFolder)
+  //   } else {
+  //     println("No aggregates folder configured")
+  //   }
+  // }
+  
+  // def cleanupAggregateFiles(aggregatesFolder: String): Unit = {
+  //   import java.io.File
+    
+  //   val folder = new File(aggregatesFolder)
+  //   if (folder.exists() && folder.isDirectory) {
+  //     folder.listFiles().foreach { subFolder =>
+  //       if (subFolder.isDirectory) {
+  //         val scalaFiles = FileUtil.getListOfFiles(subFolder, List("scala"))
+  //         scalaFiles.foreach { scalaFile =>
+  //           val content = FileUtil.read(scalaFile.getPath)
+  //           if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)) {
+  //             println(s"Deleting generated aggregate file: ${scalaFile.getPath}")
+  //             FileUtil.delete(scalaFile.getPath)
+  //           }
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
 
   //////////////////////////
 

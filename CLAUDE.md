@@ -26,6 +26,8 @@ eSCALAtor is a full-stack Scala starter project that has recently migrated from 
 **Database Layer**
 - Uses Quill for type-safe database queries
 - Code generation from PostgreSQL schema via `modules/escalator-db/generators/`
+- **Aggregate generation**: DDD-style aggregate roots with hierarchical state management
+- **Event sourcing**: Pekko Persistence compatible pure event handlers
 - Flyway for database migrations
 - Custom naming strategies and type mappers for Scala/PostgreSQL interop
 
@@ -111,6 +113,11 @@ class UsersRepository(database: PostgresDatabase)
 **📚 Complete guide: [DATABASE_GENERATOR.md](DATABASE_GENERATOR.md)**
 
 ## Recent Changes
+- **NEWEST**: Aggregate generation system for Domain-Driven Design (DDD) patterns
+- **NEWEST**: Generated BaseXxxState classes with hierarchical reference tracking
+- **NEWEST**: Pure event handlers compatible with Pekko Persistence
+- **NEWEST**: State repositories supporting both DB bootstrap and event replay
+- **NEWEST**: Automatic aggregate boundary detection for multi-level relationships
 - **NEW**: Automatic AppRepository generation (`UsersRepository`, `ProductsRepository`, etc.)
 - **NEW**: ES-compatible event system (XxxCreated, XxxUpdated, XxxDeleted events)
 - **NEW**: Configurable repository folder structure

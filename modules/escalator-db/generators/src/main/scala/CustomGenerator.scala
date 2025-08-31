@@ -17,4 +17,7 @@ trait CustomGenerator {
 	def shouldGenerateEvents(tableName: String): Boolean = true
 
 	def customEventMetadata(tableName: String): List[String] = List.empty
+	
+	// AttributeType column mappings: Map[tableName.columnName -> AttributeTypeName]
+	def columnAttributeTypeMappings(): Map[String, String] // = Map.empty
 }

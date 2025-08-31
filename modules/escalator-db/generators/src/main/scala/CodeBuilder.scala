@@ -2,6 +2,14 @@ package escalator.db.generators
 
 object CodeBuilder {
 
+	def extractClassName(fullType: String): String = {
+		if (fullType.contains(".")) {
+			fullType.split("\\.").last
+		} else {
+			fullType
+		}
+	}
+
 	def buildUpsertCode(table: Table, key: String, modelClass: String): String = {
 		// This is for upsertId which is handled differently in the tableDaoTemplate
 		// as the main upsert() method, so we just return empty string
@@ -619,7 +627,93 @@ object CodeBuilder {
 			""
 		}
 		getters
-	}	
+	}
+
+	def buildGettersByForeignKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+		val namingStrategy = GeneratorNamingStrategy
+		
+		// Find columns that are foreign keys (reference other tables)
+		val foreignKeyColumns = table.tableColumns.filter(col => col.references.isDefined)
+		
+		if (foreignKeyColumns.isEmpty) {
+			""
+		} else {
+			foreignKeyColumns.map { col =>
+				val foreignTable = col.references.get.tableName
+				val foreignKeyType = if (col.columnName.endsWith("_id")) {
+					// This is a foreign key column, use the proper ID type
+					namingStrategy.table(foreignTable) + "Id"
+				} else {
+					// This column references another table but isn't a typical _id column
+					// Use the actual column type from the model
+					// extractClassName(col.scalaType)
+					val referencedColumnName = col.references.get.columnName
+					DefnBuilder.tablesLookup.get(foreignTable) match {
+						case Some(referencedTable) =>
+							val referencedColumn = referencedTable.findColumn(referencedColumnName)
+
+							if (referencedTable.name == "attributes") {
+								col.toDefn(col.tableName, true)
+							} else {
+								println("foreignTable found. " + referencedTable.name)
+								println("foreignTable referencedColumnName:" + referencedColumnName)
+								println("foreignTable referencedColumn. " + referencedColumn.scalaType)
+
+								println("foreignTable referencedColumn. " + referencedColumn.toDefn(referencedColumn.tableName, true)) 
+								println("foreignTable referencedColumn. " + referencedColumn.toArg(namingStrategy,referencedColumn.tableName,true,true)) 
+
+								// extractClassName(referencedColumn.scalaType)
+								referencedColumn.toDefn(referencedColumn.tableName, true)
+							}
+						case None =>
+							println("foreignTable fallback")
+							// Fallback to the original approach if table not found
+							extractClassName(col.scalaType)
+					}					
+				}
+				val methodName = s"getBy${namingStrategy.table(col.columnName).capitalize}"
+				val bulkMethodName = s"getBy${namingStrategy.table(col.columnName).capitalize}s"
+				val paramName = namingStrategy.column(col.columnName)
+				val monitorKey = col.columnName.toLowerCase.replace("_", "-")
+				
+				// For nullable columns, we need to handle the Option comparison correctly
+				val singleFilterCondition = if (col.nullable) {
+					s"r.${paramName}.contains(lift(${paramName}))"
+				} else {
+					s"r.${paramName} == lift(${paramName})"
+				}
+				
+				val bulkFilterCondition = if (col.nullable) {
+					s"r.${paramName}.exists(v => liftQuery(${paramName}s).contains(v))"
+				} else {
+					s"liftQuery(${paramName}s).contains(r.${paramName})"
+				}
+				
+				// For getBy methods, we don't wrap nullable columns in Option - the method handles nulls internally
+				val singleMethod = s"""
+  override def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]] = monitored("get-by-${monitorKey}") {
+    read {
+      ctx.run(
+        query[${modelClass}]
+          .filter(r => ${singleFilterCondition})
+      ).runToFuture
+    }
+  }"""
+				
+				val bulkMethod = s"""
+  override def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]] = monitored("get-by-${monitorKey}s") {
+    read {
+      ctx.run(
+        query[${modelClass}]
+          .filter(r => ${bulkFilterCondition})
+      ).runToFuture
+    }
+  }"""
+				
+				singleMethod + "\n" + bulkMethod
+			}.mkString("\n")
+		}
+	}
 
 
 }
