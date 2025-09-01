@@ -676,14 +676,17 @@ object CodeBuilder {
 				val paramName = namingStrategy.column(col.columnName)
 				val monitorKey = col.columnName.toLowerCase.replace("_", "-")
 				
-				// For nullable columns, we need to handle the Option comparison correctly
-				val singleFilterCondition = if (col.nullable) {
+				// For foreign key columns, check if the foreignKeyType is an Option, not col.nullable
+				// This ensures we generate correct filter conditions based on the actual parameter type
+				val isOptionType = (col.nullable || foreignKeyType.startsWith("Option["))
+				
+				val singleFilterCondition = if (isOptionType) {
 					s"r.${paramName}.contains(lift(${paramName}))"
 				} else {
 					s"r.${paramName} == lift(${paramName})"
 				}
 				
-				val bulkFilterCondition = if (col.nullable) {
+				val bulkFilterCondition = if (isOptionType) {
 					s"r.${paramName}.exists(v => liftQuery(${paramName}s).contains(v))"
 				} else {
 					s"liftQuery(${paramName}s).contains(r.${paramName})"

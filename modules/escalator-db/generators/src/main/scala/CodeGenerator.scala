@@ -477,7 +477,9 @@ case class Column(customGen: CustomGenerator,
       ic.toDefn(ic.tableName, includeRef)
     } else if (shouldUseAttributeType()) {
       // Use generated AttributeType class
-      getAttributeTypeName()
+      // Wrap in Option if the column is nullable
+      val baseType = getAttributeTypeName()
+      if (nullable) s"Option[$baseType]" else baseType
     } else if (includeRef && references.isDefined){
       // println("HERE1")
       s"${references.get.toType}"
@@ -496,7 +498,10 @@ case class Column(customGen: CustomGenerator,
       ic.toArg(namingStrategy,ic.tableName,includeRef,mutate)
     } else if (shouldUseAttributeType()) {
       // Use generated AttributeType class
-      s"${fix(mutate,namingStrategy.column(columnName))}: ${getAttributeTypeName()}"
+      // Wrap in Option if the column is nullable
+      val baseType = getAttributeTypeName()
+      val finalType = if (nullable) s"Option[$baseType]" else baseType
+      s"${fix(mutate,namingStrategy.column(columnName))}: $finalType"
     } else if (includeRef && references.isDefined){
       s"${fix(mutate,namingStrategy.column(columnName))}: ${makeOption(references.get.toType)}"
     } else if (includeRef && (shouldTypeifyColumn() || incomingReferences.size > 0)){
@@ -556,26 +561,28 @@ case class Column(customGen: CustomGenerator,
     
     // Case 2: This column references attributes.attr_type
     if (references.isDefined && references.get.tableName == "attributes" && references.get.columnName == "attr_type") {
-      // Check for explicit mapping from CustomGenerator
       val tableColumnKey = s"${tableName}.${columnName}"
-      val customMappings = customGen.columnAttributeTypeMappings()
       
-      customMappings.get(tableColumnKey) match {
+      // Check for mapping from combined custom and auto-generated mappings
+      val allMappings = customGen.getAllColumnAttributeTypeMappings()
+      println("allMappings:"+allMappings)
+      println("tableColumnKey:"+tableColumnKey)
+      allMappings.get(tableColumnKey) match {
         case Some(attributeTypeName) =>
-          println(s"Found custom attribute type mapping: $tableColumnKey -> $attributeTypeName")
+          println(s"Found attribute type mapping: $tableColumnKey -> $attributeTypeName")
           return attributeTypeName
         case None =>
-          println(s"No custom mapping for $tableColumnKey")
+          println(s"No mapping found for $tableColumnKey (checked both custom and auto-generated)")
       }
       
       // Try to infer from column name patterns
-      val inferredAttrType = if (columnName.endsWith("_type")) {
-        columnName.replace("_type", "").toUpperCase.replace("_", "_") + "_TYPE"
-      } else {
-        // For columns like "source", we can't easily infer the type
-        // Would need constraint analysis or explicit mapping
-        columnName.toUpperCase.replace("_", "_") + "_TYPE" 
-      }
+      // val inferredAttrType = if (columnName.endsWith("_type")) {
+      //   columnName.replace("_type", "").toUpperCase.replace("_", "_") + "_TYPE"
+      // } else {
+      //   // For columns like "source", we can't easily infer the type
+      //   // Would need constraint analysis or explicit mapping
+      //   columnName.toUpperCase.replace("_", "_") + "_TYPE" 
+      // }
       
       // Check if we have a mapping for this inferred attribute type
       // attributeTypeMapping.get(inferredAttrType) match {
@@ -1300,6 +1307,159 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     attributeData.groupBy(_.attr)
   }
   
+  def buildColumnAttributeTypeMappingsFromConstraints(db: Connection): Map[String, String] = {
+    println("Building column attribute type mappings from database CHECK constraints...")
+
+    // val sql = """
+    //   WITH checks AS (
+    //     SELECT
+    //       tc.table_schema,
+    //       tc.table_name,
+    //       cc.check_clause
+    //     FROM information_schema.table_constraints tc
+    //     JOIN information_schema.check_constraints cc
+    //       ON cc.constraint_schema = tc.constraint_schema
+    //      AND cc.constraint_name  = tc.constraint_name
+    //     WHERE tc.constraint_type = 'CHECK'
+    //       AND tc.table_schema    = ?
+    //   ),
+    //   extracted AS (
+    //     SELECT
+    //       c.table_schema,
+    //       c.table_name,
+    //       (m)[1] AS ident_before_attr,  -- column name OR UDT name
+    //       (m)[2] AS token               -- the RHS token
+    //     FROM checks c
+    //     CROSS JOIN LATERAL regexp_match(
+    //       c.check_clause,
+    //       $$\(\s*\(\s*\(\s*([a-zA-Z_][a-zA-Z_0-9]*)\s*\)\s*\.attr\)\s*(?:::text)?\s*=\s*'([^']+)'\s*(?:::text)?\s*\)$$
+    //     ) m
+    //   )
+    //   SELECT DISTINCT ON (ic.table_name, ic.column_name)
+    //     ic.table_name,
+    //     ic.column_name,
+    //     e.token
+    //   FROM extracted e
+    //   JOIN information_schema.columns ic
+    //     ON ic.table_schema = e.table_schema
+    //    AND ic.table_name   = e.table_name
+    //    AND ic.data_type    = 'USER-DEFINED'
+    //   -- AND (
+    //   --       lower(ic.column_name) = lower(e.ident_before_attr)  -- identifier is a column
+    //   --    OR lower(ic.udt_name)    = lower(e.ident_before_attr)  -- identifier is the UDT type
+    //   --    )
+    //   WHERE e.token IS NOT NULL
+    //   ORDER BY ic.table_name, ic.column_name, e.token NULLS LAST;
+    // """
+    
+    val sql = """
+      WITH checks AS (
+        SELECT
+          tc.table_schema,
+          tc.table_name,
+          cc.check_clause
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.check_constraints cc
+          ON cc.constraint_schema = tc.constraint_schema
+         AND cc.constraint_name  = tc.constraint_name
+        WHERE tc.constraint_type = 'CHECK'
+          AND tc.table_schema    = 'public'
+      ),
+      -- Pull *all* (identifier, token) pairs from each CHECK
+      pairs AS (
+        SELECT
+          c.table_schema,
+          c.table_name,
+          COALESCE(m[4], m[3], m[2], m[1]) AS ident,   -- rightmost ident if qualified
+          m[5] AS token
+        FROM checks c
+        CROSS JOIN LATERAL regexp_matches(
+          c.check_clause,
+          $$\(\s*\(\s*\(\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z_0-9]*))(?:\s*\.\s*(?:"([^"]+)"|([A-Za-z_][A-Za-z_0-9]*)))?\s*\)\s*\.attr\)\s*(?:::text)?\s*=\s*'([^']+)'\s*(?:::text)?$$,
+          'g'
+        ) AS m
+      ),
+      rels AS (
+        SELECT c.oid AS relid, n.nspname AS table_schema, c.relname AS table_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+      )
+      SELECT DISTINCT ON (r.table_name, a.attname)
+        r.table_name  AS table_name,
+        a.attname     AS column_name,
+        p.token
+      FROM pairs p
+      JOIN rels r
+        ON r.table_schema = p.table_schema
+       AND r.table_name   = p.table_name
+      JOIN pg_attribute a
+        ON a.attrelid = r.relid
+       AND a.attnum > 0 AND NOT a.attisdropped
+      LEFT JOIN pg_type t            -- for type-name fallback
+        ON lower(t.typname) = lower(p.ident)
+      -- Optional: keep only USER-DEFINED columns. Uncomment if you want this filter.
+      -- JOIN information_schema.columns ic
+      --   ON ic.table_schema = r.table_schema AND ic.table_name = r.table_name AND ic.column_name = a.attname
+      --  AND ic.data_type = 'USER-DEFINED'
+      WHERE
+        -- assign a priority to each candidate column for this (table, ident)
+        CASE
+          WHEN lower(a.attname) = lower(p.ident) THEN 1                     -- direct column name match
+          WHEN t.oid IS NOT NULL AND a.atttypid = t.oid THEN 2              -- same type as ident
+          WHEN a.attname ~* ('(^|_)' || regexp_replace(p.ident,'\W','','g') || '(_|$)') THEN 3  -- name-like fallback
+          ELSE NULL
+        END IS NOT NULL
+      ORDER BY
+        r.table_name, a.attname,
+        CASE
+          WHEN lower(a.attname) = lower(p.ident) THEN 1
+          WHEN t.oid IS NOT NULL AND a.atttypid = t.oid THEN 2
+          WHEN a.attname ~* ('(^|_)' || regexp_replace(p.ident,'\W','','g') || '(_|$)') THEN 3
+        END;
+    """
+
+    val stmt = db.prepareStatement(sql)
+    // stmt.setString(1, options.schema)
+    val rs = stmt.executeQuery()
+    
+    val mappings = scala.collection.mutable.Map[String, String]()
+    
+    while (rs.next()) {
+      val tableName = rs.getString("table_name")
+      val columnName = rs.getString("column_name")  
+      // val checkClause = rs.getString("check_clause")
+      val token = rs.getString("token")
+      
+      // Extract attribute type from check clause like: ((entity_type).attr = 'ENTITY_TYPE'::text)
+      // or: check ((entity_type).attr = 'ENTITY_TYPE')
+      // val pattern = """.*attr\s*=\s*'([^']+)'.*""".r
+      // val pattern = """.*attr\s*=\s*'([^']+)'(?:::text)?.*""".r
+      // val pattern = """.*\)\.attr\)?(?:::text)?\s*=\s*'([^']+)'(?:::text)?.*""".r
+
+      // checkClause match {
+        // case pattern(attrType) =>
+          // Convert ENTITY_TYPE to EntityType
+          val attrType = token
+
+          val className = attrType.toLowerCase.replace("_type", "").split("_").map(_.capitalize).mkString("") + "Type"
+
+          // val className = attrType.split("_").map(_.toLowerCase.capitalize).mkString("")
+          val key = s"$tableName.$columnName"
+          mappings(key) = className
+          println(s"  Found mapping: $key -> $className")
+        // case _ =>
+          // println(s"  Could not parse constraint for $tableName.$columnName: $checkClause")
+      // }
+    }
+    
+    stmt.close()
+
+    println(mappings)
+
+    mappings.toMap
+  }
+  
   def generateAttributeTypes(db: Connection): Unit = {
     println("Generating AttributeTypes from database...")
     
@@ -1462,6 +1622,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       DriverManager.getConnection(codegenOptions.url,
                                   codegenOptions.user,
                                   codegenOptions.password)
+
+    // Initialize auto-generated column attribute type mappings from database constraints
+    val autoMappings = buildColumnAttributeTypeMappingsFromConstraints(db)
+    customGen.setAutoGeneratedColumnMappings(autoMappings)
 
     // val namingStrategy = GeneratorNamingStrategy
     // val codegen = CodeGenerator(codegenOptions, namingStrategy)
@@ -1664,6 +1828,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val startTime = System.currentTimeMillis()
     Class.forName(options.jdbcDriver)
     val db: Connection = DriverManager.getConnection(options.url, options.user, options.password)
+    
+    // Initialize auto-generated column attribute type mappings from database constraints
+    val autoMappings = buildColumnAttributeTypeMappingsFromConstraints(db)
+    customGen.setAutoGeneratedColumnMappings(autoMappings)
     
     try {
       println(s"Generating aggregate root for table: $rootTableName")
