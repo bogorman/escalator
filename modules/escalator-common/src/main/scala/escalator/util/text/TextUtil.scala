@@ -21,6 +21,8 @@ object TextUtil {
     } else {
       if (str.endsWith("classes")) {
         str.stripSuffix("es")   
+      } else if (str.endsWith("entities")) {
+        str.stripSuffix("ities") + "ity"
       } else {
         str.stripSuffix("s") 
       }
@@ -49,6 +51,8 @@ object TextUtil {
       val s = str.toLowerCase
       if (s.endsWith("class")){
         str + "es"
+      } else if (s.endsWith("y") && !s.endsWith("ey") && !s.endsWith("ay") && !s.endsWith("oy") && !s.endsWith("uy")) {
+        str.stripSuffix("y") + "ies"
       } else {
         str + "s"
       }
