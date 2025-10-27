@@ -260,7 +260,7 @@ import escalator.ddd.Event
 import escalator.models.CorrelationId
 import escalator.util.Timestamp
 import ${options.packageName}.models._
-import ${options.packageName}.models.events._
+// import ${options.packageName}.models.events._
 
 /**
  * Base aggregate state for ${aggregateName}
@@ -275,7 +275,7 @@ case class Base${aggregateName}State(
    * Apply an event to update the aggregate state
    */
   def applyEvent(event: Event): Base${aggregateName}State = event match {
-    case e: ${aggregateName}Event => ${aggregateName}EventHandler.apply(this, e)${generateEventMatchCases(tree, aggregateName)}
+    case e: events.${aggregateName}Event => ${aggregateName}EventHandler.apply(this, e)${generateEventMatchCases(tree, aggregateName)}
     case _ => this  // Ignore unrelated events
   }
 }
@@ -298,7 +298,7 @@ object Base${aggregateName}State {
     val eventCases = uniqueTables.map { table =>
       val eventName = namingStrategy.table(singularize(table))
       s"""
-    case e: ${eventName}Event => ${aggregateName}EventHandler.apply(this, e)"""
+    case e: events.${eventName}Event => ${aggregateName}EventHandler.apply(this, e)"""
     }
     eventCases.mkString
   }
@@ -325,7 +325,7 @@ import escalator.ddd.Event
 import escalator.models.CorrelationId
 import escalator.util.Timestamp
 import ${options.packageName}.models._
-import ${options.packageName}.models.events._
+// import ${options.packageName}.models.events._
 
 /**
  * Pure event handlers for ${aggregateName} aggregate
@@ -345,23 +345,23 @@ $childEventHandlers
     s"""  /**
    * Handle events for the root ${aggregateName} entity
    */
-  def apply(state: Base${aggregateName}State, event: ${aggregateName}Event): Base${aggregateName}State = {
+  def apply(state: Base${aggregateName}State, event: events.${aggregateName}Event): Base${aggregateName}State = {
     event match {
-      case ${aggregateName}Created($rootEntityFieldName, _, correlationId, timestamp) =>
+      case events.${aggregateName}Created($rootEntityFieldName, _, correlationId, timestamp) =>
         state.copy(
           $rootEntityFieldName = Some($rootEntityFieldName),
           version = state.version + 1,
           lastUpdated = timestamp
         )
         
-      case ${aggregateName}Updated($rootEntityFieldName, previous${aggregateName}, _, correlationId, timestamp) =>
+      case events.${aggregateName}Updated($rootEntityFieldName, previous${aggregateName}, _, correlationId, timestamp) =>
         state.copy(
           $rootEntityFieldName = Some($rootEntityFieldName),
           version = state.version + 1,
           lastUpdated = timestamp
         )
         
-      case ${aggregateName}Deleted($rootEntityFieldName, _, correlationId, timestamp) =>
+      case events.${aggregateName}Deleted($rootEntityFieldName, _, correlationId, timestamp) =>
         // Mark as deleted by setting to None
         state.copy(
           $rootEntityFieldName = None,
@@ -386,23 +386,23 @@ $childEventHandlers
     s"""  /**
    * Handle events for ${childName} entities ($depthDescription)
    */
-  def apply(state: Base${aggregateName}State, event: ${childName}Event): Base${aggregateName}State = {
+  def apply(state: Base${aggregateName}State, event: events.${childName}Event): Base${aggregateName}State = {
     event match {
-      case ${childName}Created(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
+      case events.${childName}Created(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
         state.copy(
           $fieldName = state.$fieldName :+ ${childNameLower}.id,
           version = state.version + 1,
           lastUpdated = timestamp
         )
         
-      case ${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $foreignKeyCheck =>
+      case events.${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $foreignKeyCheck =>
         // No ID changes needed for updates
         state.copy(
           version = state.version + 1,
           lastUpdated = timestamp
         )
         
-      case ${childName}Deleted(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
+      case events.${childName}Deleted(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
         state.copy(
           $fieldName = state.$fieldName.filterNot(_ == ${childNameLower}.id),$nestedUpdates
           version = state.version + 1,
@@ -485,7 +485,7 @@ import escalator.ddd.Event
 import escalator.models.CorrelationId
 import escalator.util.{Timestamp, TimeUtil}
 import ${options.packageName}.models._
-import ${options.packageName}.models.events._
+// import ${options.packageName}.models.events._
 import ${options.packageName}.core.repositories.postgres._
 
 import monix.eval.Task
@@ -571,7 +571,7 @@ ${generateStateConstruction(tree)}
       val loadingTasks = directChildren.map { node =>
         // node.table is already plural, don't pluralize again
         val tableName = node.table
-        val foreignKeyMethodName = s"getBy${namingStrategy.table(node.foreignKeyColumn).capitalize}"
+        val foreignKeyMethodName = s"getListBy${namingStrategy.table(node.foreignKeyColumn).capitalize}"
         s"Task.fromFuture(${TextUtil.snakeToLowerCamel(tableName)}Repo.${foreignKeyMethodName}(${singularize(tree.rootTable.toLowerCase)}Id))"
       }
       
@@ -646,7 +646,7 @@ $assignmentCode"""
         
         s"""            // Load ${childNode.table} for each ${parentNode.table}
             $mapVarName <- if ($parentVarName.nonEmpty) {
-              Task.fromFuture(${TextUtil.snakeToLowerCamel(childNode.table)}Repo.getBy${namingStrategy.table(childNode.foreignKeyColumn).capitalize}s($parentVarName.map(_.id)))
+              Task.fromFuture(${TextUtil.snakeToLowerCamel(childNode.table)}Repo.getListBy${namingStrategy.table(childNode.foreignKeyColumn).capitalize}s($parentVarName.map(_.id)))
                 .map(_.groupBy(_.${namingStrategy.column(childNode.foreignKeyColumn)}).map { case (k, v) => k -> v.map(_.id) }.asInstanceOf[Map[$foreignKeyType, List[${namingStrategy.table(singularize(childNode.table))}Id]]])
             } else {
               Task.pure(Map.empty[$foreignKeyType, List[${namingStrategy.table(singularize(childNode.table))}Id]])
@@ -759,7 +759,7 @@ import monix.eval.Task
 import escalator.ddd.Event
 import ${options.packageName}.aggregates.${aggregateName.toLowerCase}.Base${aggregateName}State
 import ${options.packageName}.models._
-import ${options.packageName}.models.events._
+// import ${options.packageName}.models.events._
 
 /**
  * Business logic for ${aggregateName} aggregate
@@ -816,7 +816,7 @@ import escalator.ddd.{Command, Event}
 import escalator.models.CorrelationId
 import escalator.util.{Timestamp, TimeUtil}
 import ${options.packageName}.models._
-import ${options.packageName}.models.events._
+// import ${options.packageName}.models.events._
 
 /**
  * Pekko Persistence EventSourced actor for ${aggregateName} aggregate

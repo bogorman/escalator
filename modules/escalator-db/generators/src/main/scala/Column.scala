@@ -100,11 +100,11 @@ case class Column(customGen: CustomGenerator,
   }
 
   def fix(mutate: Boolean, arg: String): String = {
-    if (mutate && arg == "quote"){
-      "quote_arg"
-    } else {
+    // if (mutate && arg == "quote"){
+      // "quote_arg"
+    // } else {
       arg  
-    }
+    // }
     
   }
 
@@ -131,7 +131,7 @@ case class Column(customGen: CustomGenerator,
     // 1. Columns with attribute_type schema type
     // 2. Columns that reference the attributes table attr_type column
     
-    println(s"shouldUseAttributeType ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
+    // println(s"shouldUseAttributeType ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
     
     val isAttributeTypeColumn = (scalaType == "AttributeType" || scalaType.endsWith(".AttributeType"))
     val referencesAttributeTable = references.isDefined && references.get.tableName == "attributes" && references.get.columnName == "attr_type"
@@ -140,7 +140,7 @@ case class Column(customGen: CustomGenerator,
   }
   
   def getAttributeTypeName(): String = {
-    println(s"getAttributeTypeName ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
+    // println(s"getAttributeTypeName ${tableName}.${columnName} ${scalaType} references=${references.map(r => r.tableName + "." + r.columnName)}")
     
     // Case 1: This is the attr_type column in attributes table
     if (columnName == "attr_type") {
@@ -153,11 +153,11 @@ case class Column(customGen: CustomGenerator,
       
       // Check for mapping from combined custom and auto-generated mappings
       val allMappings = customGen.getAllColumnAttributeTypeMappings()
-      println("allMappings:"+allMappings)
-      println("tableColumnKey:"+tableColumnKey)
+      // println("allMappings:"+allMappings)
+      // println("tableColumnKey:"+tableColumnKey)
       allMappings.get(tableColumnKey) match {
         case Some(attributeTypeName) =>
-          println(s"Found attribute type mapping: $tableColumnKey -> $attributeTypeName")
+          // println(s"Found attribute type mapping: $tableColumnKey -> $attributeTypeName")
           return attributeTypeName
         case None =>
           println(s"No mapping found for $tableColumnKey (checked both custom and auto-generated)")
@@ -185,7 +185,7 @@ case class Column(customGen: CustomGenerator,
     
     // Case 3: This is a direct attribute_type schema column
     val baseName = columnName.replace("_type", "").split("_").map(_.capitalize).mkString("") + "Type"
-    println(s"getAttributeTypeName result: ${baseName}")
+    // println(s"getAttributeTypeName result: ${baseName}")
     baseName
   }
 

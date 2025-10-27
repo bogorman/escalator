@@ -127,6 +127,8 @@ object GeneratorTemplates {
 
 		val upsert = DefnBuilder.buildUpsertsDefn(table, packageSpace, modelClass, tableName, tableClass)
 
+		val merge = DefnBuilder.buildMergesDefn(table, packageSpace, modelClass, tableName, tableClass)
+
 		val uniqueChecks = DefnBuilder.buildUniqueCheckDefn(table, packageSpace, modelClass, tableName, tableClass)
 
 		val updatesById = if (canAddUpdateById(table)) {
@@ -146,7 +148,7 @@ object GeneratorTemplates {
 		} else {
 			""
 		}
-		
+
 		val gettersByForeignKeys = DefnBuilder.buildGettersByForeignKeysDefn(table, packageSpace, modelClass, tableName, tableClass)
 
 		// val store = DefnBuilder.buildStoreDefn(table, packageSpace, modelClass, tableName, tableClass)
@@ -156,6 +158,8 @@ object GeneratorTemplates {
 		} else {
 			s"""
 				def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]]
+
+				def getByIds(${initial}: List[${primaryKeyClass.get}]): Future[List[${modelClass}]]
 
 				def update(${initial}: ${modelClass}): Future[${modelClass}]
 
@@ -187,6 +191,8 @@ object GeneratorTemplates {
 
 		  ${upsert}
 
+		  ${merge}
+
 		  ${uniqueChecks}
 
 		  ${updatesById}
@@ -196,7 +202,7 @@ object GeneratorTemplates {
 		  ${primaryIdFuncs}
 
 		  ${gettersByUniqueKeys}
-		  
+
 		  ${gettersByForeignKeys}
 
 		  def count: Future[Long]
@@ -217,15 +223,17 @@ object GeneratorTemplates {
 		} else {
 			""
 		}
-		
+
 		val pkFieldForDeleted = pkFieldForCreated
 
-		println("tableDaoTemplate:" + tableName)
-		println(table.uniqueKeysExcludingPrimaryKey)
+		// println("tableDaoTemplate:" + tableName)
+		// println(table.uniqueKeysExcludingPrimaryKey)
 
-    	val upsert = CodeBuilder.buildUpsertsCode(table, packageSpace, modelClass, tableName, tableClass)
+		val upsert = CodeBuilder.buildUpsertsCode(table, packageSpace, modelClass, tableName, tableClass)
 
-    	val uniqueChecks = CodeBuilder.buildUniqueCheckDefn(table, packageSpace, modelClass, tableName, tableClass)
+		val merge = CodeBuilder.buildMergesCode(table, packageSpace, modelClass, tableName, tableClass)
+
+		val uniqueChecks = CodeBuilder.buildUniqueCheckDefn(table, packageSpace, modelClass, tableName, tableClass)
 
 		val updatesById = if (canAddUpdateById(table)) {
 			CodeBuilder.buildUpdatesByIdCode(table, packageSpace, modelClass, tableName, tableClass)
@@ -311,6 +319,17 @@ object GeneratorTemplates {
 			    }
 			  }
 
+			  override def getByIds(${initial}: List[${primaryKeyClass.get}]): Future[List[${modelClass}]] =monitored("getByIds") {
+			      read {
+			        ctx
+			          .run(
+			            query[${modelClass}]
+			              .filter(obj => liftQuery(${initial}).contains(obj.id))
+			          )
+			          .runToFuture
+			      }
+			    }
+
 			  override def update(${initial}: ${modelClass}): Future[${modelClass}] = monitored("update") {
 			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
 			  		insert(${initial})
@@ -324,7 +343,7 @@ object GeneratorTemplates {
 			  					.filter(_.id == lift(${initial}.id))
 			  					.update(lift(updatedModel))
 			  			).runToFuture
-			  		}.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+			  		}.publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
 			  	}
 			  }
 
@@ -349,7 +368,7 @@ object GeneratorTemplates {
 			          .filter(_.id == lift(${initial}.id))
 			          .delete
 			      ).runToFuture
-			    }.publishingDeleted((m, cid, time) => ${modelClass}Deleted(m, ${pkFieldForDeleted} cid, time))
+			    }.publishingDeleted((m, cid, time) => events.${modelClass}Deleted(m, ${pkFieldForDeleted} cid, time))
 			  }
 
 			"""
@@ -407,7 +426,7 @@ object GeneratorTemplates {
 		import ${packageSpace}.common.persistence.postgres.PostgresMappedEncoder
 
 		import ${packageSpace}.models._
-		import ${packageSpace}.models.events._
+		// import ${packageSpace}.models.events._
 
 		import ${packageSpace}.persistence.database.tables.${tableClass}
 
@@ -445,7 +464,7 @@ object GeneratorTemplates {
 		        ${returningGeneratedValues}
 		    ).runToFuture${storeClassUpdate}.flatMap { result =>
 		      writeWithTimestamp(result, ts)(Future.successful(()))
-		        .publishingCreated((m, cid, time) => ${modelClass}Created(m, ${pkFieldForCreated} cid, time))
+		        .publishingCreated((m, cid, time) => events.${modelClass}Created(m, ${pkFieldForCreated} cid, time))
 		    }
 		  }
 
@@ -454,6 +473,8 @@ object GeneratorTemplates {
 		  }
 
 		  ${upsert}
+
+		  ${merge}
 
 		  ${uniqueChecks}
 

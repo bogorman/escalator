@@ -46,6 +46,18 @@ object DefnBuilder {
 		"""
 	}
 
+	def buildMergeOnDefn(table: Table, key: UniqueKey, modelClass: String): String = {
+		val namingStrategy = GeneratorNamingStrategy
+
+		val initial = modelClass.take(1).toLowerCase
+
+		val functionName = key.cols.map( c => namingStrategy.table(c.columnName) ).mkString("")
+
+		s"""
+		  def mergeOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}]
+		"""
+	}
+
 
 	def buildUniqueExistanceDefn(table: Table, key: UniqueKey, modelClass: String): String = {
 		val namingStrategy = GeneratorNamingStrategy
@@ -150,22 +162,48 @@ object DefnBuilder {
 		}
 
 		val upsert3 = if (table.inheritedFromTable.isDefined){
-			println("table.inheritedFromTable.isDefined:" + tableName)
+			// println("table.inheritedFromTable.isDefined:" + tableName)
 
 			val it = table.inheritedFromTable.get
 			if (it.hasUniqueKeysExcludingPrimaryKey()){
 				val uKeys2 = it.uniqueKeysExcludingPrimaryKey
-				uKeys2.map { uk => buildUpsertOnDefn(table, uk, modelClass) }.mkString("\n")	
+				uKeys2.map { uk => buildUpsertOnDefn(table, uk, modelClass) }.mkString("\n")
 			} else {
 				""
 			}
 
 		} else {
 			""
-		}		
+		}
 		// val upsert2 = ""
 
 		upsert1 + upsert2 + upsert3
+	}
+
+	def buildMergesDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+		// val includeMergeOn = table.hasUniqueKeysExcludingPrimaryKey()
+		// val merge1 = if (includeMergeOn) {
+		// 	val uKeys = table.uniqueKeysExcludingPrimaryKey
+		// 	uKeys.map { uk => buildMergeOnDefn(table, uk, modelClass) }.mkString("\n")
+		// } else {
+		// 	""
+		// }
+
+		// val merge2 = if (table.inheritedFromTable.isDefined){
+		// 	val it = table.inheritedFromTable.get
+		// 	if (it.hasUniqueKeysExcludingPrimaryKey()){
+		// 		val uKeys2 = it.uniqueKeysExcludingPrimaryKey
+		// 		uKeys2.map { uk => buildMergeOnDefn(table, uk, modelClass) }.mkString("\n")
+		// 	} else {
+		// 		""
+		// 	}
+		// } else {
+		// 	""
+		// }
+
+		// merge1 + merge2
+
+		""
 	}
 
 	def buildUniqueCheckDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
@@ -230,7 +268,7 @@ object DefnBuilder {
 			val uKeys = table.uniqueKeysExcludingPrimaryKey
 			val nonKeyColumns = table.nonKeyColumns
 
-			println("buildGettersByUniqueKeysDefn: " + table.name)
+			// println("buildGettersByUniqueKeysDefn: " + table.name)
 			println(uKeys)
 
 			uKeys.map { uk =>
@@ -244,7 +282,7 @@ object DefnBuilder {
 	
 	def buildGettersByForeignKeysDefn(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
 		val namingStrategy = GeneratorNamingStrategy
-		println("buildGettersByForeignKeysDefn " + table.name)
+		// println("buildGettersByForeignKeysDefn " + table.name)
 
 		// Find columns that are foreign keys (reference other tables)
 		val foreignKeyColumns = table.tableColumns.filter(col => col.references.isDefined)
@@ -286,8 +324,8 @@ object DefnBuilder {
 				}
 
 
-				val methodName = s"getBy${namingStrategy.table(col.columnName).capitalize}"
-				val bulkMethodName = s"getBy${namingStrategy.table(col.columnName).capitalize}s"
+				val methodName = s"getListBy${namingStrategy.table(col.columnName).capitalize}"
+				val bulkMethodName = s"getListBy${namingStrategy.table(col.columnName).capitalize}s"
 				val paramName = namingStrategy.column(col.columnName)
 
 				val c = table.findColumn(col.columnName)

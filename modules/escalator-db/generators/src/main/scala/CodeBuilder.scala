@@ -16,6 +16,101 @@ object CodeBuilder {
 		""
 	}	
 
+	def buildMergeOnCode(table: Table, key: UniqueKey, modelClass: String): String = {
+		val namingStrategy = GeneratorNamingStrategy
+
+		val primaryKeyClass: Option[String] = table.primaryKeyClass
+		val initial = modelClass.take(1).toLowerCase
+
+		val uniqueKeyCols = key.cols.map { scol =>
+		  namingStrategy.column(scol.columnName)
+		}.toList
+
+		// Get actual database column names directly from table.columns
+		val tableDbCols = table.columns.map { col =>
+		  col.columnName
+		}.toList
+
+		val tableCamelCols = table.columns.map { col =>
+		  namingStrategy.column(col.columnName)
+		}.toList
+
+		// Find conflict columns to update (exclude key columns and system columns)
+		val conflictDbCols = table.columns.filter { col =>
+		  val camelName = namingStrategy.column(col.columnName)
+		  !uniqueKeyCols.contains(camelName) && camelName != "id" && camelName != "createdAt"
+		}.map(_.columnName)
+
+		val monitorKey = key.cols.map( _.columnName.toLowerCase ).mkString("-")
+		val functionName = key.cols.map( c => namingStrategy.table(c.columnName) ).mkString("")
+
+		// Build the ON condition for MERGE
+		val onConditions = key.cols.map { sc =>
+			s"t.${sc.columnName} = s.${sc.columnName}"
+		}.mkString(" AND ")
+
+		// Build the UPDATE SET clause
+		val updateSetClauses = conflictDbCols.map { colName =>
+			s"${colName} = s.${colName}"
+		}.mkString(", ")
+
+		// Build the INSERT column list
+		val insertCols = tableDbCols.mkString(", ")
+
+		// Build INSERT VALUES
+		val insertValues = tableDbCols.map { colName =>
+			s"s.${colName}"
+		}.mkString(", ")
+
+		// Build the SELECT projection for USING clause
+		val selectProjection = table.columns.map { col =>
+			val camelName = namingStrategy.column(col.columnName)
+			s"$$lift(toMerge.${camelName}) AS ${col.columnName}"
+		}.mkString(", ")
+
+		val pkFieldForCreated = if (primaryKeyClass.isDefined) {
+			val pkField = table.primaryKeyCol.get.toArg(GeneratorNamingStrategy, table.name, true).split(":")(0).trim
+			s"${pkField} = result.${pkField},"
+		} else {
+			""
+		}
+
+		val insertUpdateTimeTracking = if (primaryKeyClass.isEmpty){
+			s"${initial}"
+		} else {
+			s"${initial}.copy(createdAt = ts, updatedAt = ts)"
+		}
+
+		s"""
+		  override def mergeOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}] = monitored("merge-on-${monitorKey}") {
+		    val ts = TimeUtil.nowTimestamp()
+		    val toMerge = ${insertUpdateTimeTracking}
+
+		    ctx.run(
+		      infix${"\"\"\""}
+		        MERGE INTO $${quote(tableName)} AS t
+		        USING (SELECT ${selectProjection}) AS s
+		        ON ${onConditions}
+		        WHEN MATCHED THEN
+		          UPDATE SET ${updateSetClauses}, updated_at = $${lift(ts)}
+		        WHEN NOT MATCHED THEN
+		          INSERT (${insertCols})
+		          VALUES (${insertValues})
+		        RETURNING *, (xmax = 0) AS was_inserted
+		      ${"\"\"\""}.as[(${modelClass}, Boolean)]
+		    ).runToFuture.map(_.head).flatMap { case (result, wasInserted) =>
+		      if (wasInserted) {
+		        writeWithTimestamp(result, ts)(Future.successful(()))
+		          .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		      } else {
+		        writeWithTimestamp(result, ts)(Future.successful(()))
+		          .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		      }
+		    }
+		  }
+		"""
+	}
+
 	def buildUpsertOnCode(table: Table, key: UniqueKey, modelClass: String): String = {
 		// table.uniqueKeysExcludingPrimaryKey
 		val namingStrategy = GeneratorNamingStrategy
@@ -37,17 +132,17 @@ object CodeBuilder {
 		  col.columnName
 		}.toList		
 
-		println("tableCols2")
-		println(tableCols2)
+		// println("tableCols2")
+		// println(tableCols2)
 
-		println("uniqueKeyCols")
-		println(uniqueKeyCols)
+		// println("uniqueKeyCols")
+		// println(uniqueKeyCols)
 
-		println("tableCols")
-		println(tableCols)
+		// println("tableCols")
+		// println(tableCols)
 
-		println("conflictCols")
-		println(conflictCols)
+		// println("conflictCols")
+		// println(conflictCols)
 
 		val monitorKey = key.cols.map( _.columnName.toLowerCase ).mkString("-")
 		val functionName = key.cols.map( c => namingStrategy.table(c.columnName) ).mkString("")
@@ -148,10 +243,10 @@ object CodeBuilder {
 				_ <- Task.deferFuture {
 		               if (wasInserted)
 		                 writeWithTimestamp(result, ts)(Future.successful(()))
-		                   .publishingCreated((cur, cid, time) => ${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		                   .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
 		               else
 		                 writeWithTimestamp(result, ts)(Future.successful(()))
-		                   .publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		                   .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
 		             }
 			      } yield result				
 		      
@@ -348,7 +443,7 @@ object CodeBuilder {
 		  					${updateAt}
 		  				)  
 		            ).runToFuture
-		          }.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, Some(updatedModel), ${pkFieldForCreated} cid, time))
+		          }.publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, Some(updatedModel), ${pkFieldForCreated} cid, time))
 
 		        case None =>
 		          Future.failed(new NoSuchElementException(s"No ${modelClass} found with id $$id"))
@@ -441,7 +536,7 @@ object CodeBuilder {
 		  					${updateAt}
 		  				)  
 		            ).runToFuture
-		          }.publishingUpdated((cur, prev, cid, time) => ${modelClass}Updated(cur, Some(updatedModel), id = cur.id, cid, time))
+		          }.publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, Some(updatedModel), id = cur.id, cid, time))
 
 		        case None =>
 		          Future.failed(new NoSuchElementException(s"No ${modelClass} found with ${keyArgs}"))
@@ -542,17 +637,44 @@ object CodeBuilder {
 			val it = table.inheritedFromTable.get
 			if (it.hasUniqueKeysExcludingPrimaryKey()){
 				val uKeys2 = it.uniqueKeysExcludingPrimaryKey
-				uKeys2.map { uk => buildUpsertOnCode(table, uk, modelClass) }.mkString("\n")	
+				uKeys2.map { uk => buildUpsertOnCode(table, uk, modelClass) }.mkString("\n")
 			} else {
 				""
 			}
 
 		} else {
 			""
-		}	
-		// val upsert2 = ""	
+		}
+		// val upsert2 = ""
 
 		upsert1 + upsert2 + upsert3
+	}
+
+	def buildMergesCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+		// val includeMergeOn = table.hasUniqueKeysExcludingPrimaryKey()
+		// val merge1 = if (includeMergeOn) {
+		// 	val uKeys = table.uniqueKeysExcludingPrimaryKey
+		// 	val mergeCodeStr = uKeys.map { uk => buildMergeOnCode(table, uk, modelClass) }.mkString("\n")
+		// 	mergeCodeStr
+		// } else {
+		// 	""
+		// }
+
+		// val merge2 = if (table.inheritedFromTable.isDefined){
+		// 	val it = table.inheritedFromTable.get
+		// 	if (it.hasUniqueKeysExcludingPrimaryKey()){
+		// 		val uKeys2 = it.uniqueKeysExcludingPrimaryKey
+		// 		uKeys2.map { uk => buildMergeOnCode(table, uk, modelClass) }.mkString("\n")
+		// 	} else {
+		// 		""
+		// 	}
+		// } else {
+		// 	""
+		// }
+
+		// merge1 + merge2
+
+		""
 	}
 
 
@@ -655,24 +777,24 @@ object CodeBuilder {
 							if (referencedTable.name == "attributes") {
 								col.toDefn(col.tableName, true)
 							} else {
-								println("foreignTable found. " + referencedTable.name)
-								println("foreignTable referencedColumnName:" + referencedColumnName)
-								println("foreignTable referencedColumn. " + referencedColumn.scalaType)
+								// println("foreignTable found. " + referencedTable.name)
+								// println("foreignTable referencedColumnName:" + referencedColumnName)
+								// println("foreignTable referencedColumn. " + referencedColumn.scalaType)
 
-								println("foreignTable referencedColumn. " + referencedColumn.toDefn(referencedColumn.tableName, true)) 
-								println("foreignTable referencedColumn. " + referencedColumn.toArg(namingStrategy,referencedColumn.tableName,true,true)) 
+								// println("foreignTable referencedColumn. " + referencedColumn.toDefn(referencedColumn.tableName, true)) 
+								// println("foreignTable referencedColumn. " + referencedColumn.toArg(namingStrategy,referencedColumn.tableName,true,true)) 
 
 								// extractClassName(referencedColumn.scalaType)
 								referencedColumn.toDefn(referencedColumn.tableName, true)
 							}
 						case None =>
-							println("foreignTable fallback")
+							// println("foreignTable fallback")
 							// Fallback to the original approach if table not found
 							extractClassName(col.scalaType)
 					}					
 				}
-				val methodName = s"getBy${namingStrategy.table(col.columnName).capitalize}"
-				val bulkMethodName = s"getBy${namingStrategy.table(col.columnName).capitalize}s"
+				val methodName = s"getListBy${namingStrategy.table(col.columnName).capitalize}"
+				val bulkMethodName = s"getListBy${namingStrategy.table(col.columnName).capitalize}s"
 				val paramName = namingStrategy.column(col.columnName)
 				val monitorKey = col.columnName.toLowerCase.replace("_", "-")
 				
@@ -712,7 +834,6 @@ object CodeBuilder {
       ).runToFuture
     }
   }"""
-				
 				singleMethod + "\n" + bulkMethod
 			}.mkString("\n")
 		}

@@ -35,9 +35,9 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
   def columnCaseClasses(): List[String] = {
     val caseClasses = tableColumns.filter(_.shouldDefineType).map { col =>
-      println("shouldDefineType:" + name + ":" + col.columnName + " " + col.toDefn(name, true))
+      // println("shouldDefineType:" + name + ":" + col.columnName + " " + col.toDefn(name, true))
       val cc = s"""case class ${col.toDefn(name, true)}(${col.toArg(namingStrategy, name, false)}) extends AnyVal"""
-      println(cc)
+      // println(cc)
       cc
     }
     caseClasses.toList
@@ -85,7 +85,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     // var index = 0
     val caseClasses = ukKeys.map { uk =>
-      println("uniqueKeyCaseClasses:" + uk)
+      // println("uniqueKeyCaseClasses:" + uk)
 
       // val suffix = if (index > 0){
       //   s"${index}"
@@ -100,7 +100,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       val caseClassName = makeUniqueKeyClassName(uk)
 
       val args = uk.cols.map { scol =>
-        println("scol: " + scol.columnName)
+        // println("scol: " + scol.columnName)
 
         val col = findColumn(scol.columnName)
         col.toArg(namingStrategy, name, true)
@@ -111,7 +111,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       // cc
       val caseClass = s"case class $caseClassName($args)"
 
-      println(caseClass)
+      // println(caseClass)
 
       caseClass      
     }
@@ -130,7 +130,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   def mainCaseClass(): String = {
     val scalaName = namingStrategy.table(name)
 
-    println("toCaseClass scalaName:" + scalaName)
+    // println("toCaseClass scalaName:" + scalaName)
 
     val autoColumn = tableColumns.filter { c => c.isAutoColumn && !c.isExtraColumn}
     val noAutoColumns = tableColumns.filter { c => !c.isAutoColumn && !c.isExtraColumn}
@@ -158,6 +158,14 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
     }
   }
 
+  def appendIfNotEmpty(code: String, toAppend: String): String = {
+    if (code == ""){
+      ""
+    } else {
+      code + toAppend
+    }
+  }
+
   def mainObjectClass(): String = {
     val scalaName = namingStrategy.table(name)
 
@@ -182,10 +190,10 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     val objectArgs = (requiredObjectArgs ++ extraObjectArgs).mkString(", ")     
 
-    val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)}),").getOrElse("")
+    val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)})").getOrElse("")
 
-    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp(0L),").getOrElse("")
-    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp(0L),").getOrElse("")
+    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp(0L)").getOrElse("")
+    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp(0L)").getOrElse("")
 
     val objectClass = if (inheritedFromTable.isDefined){
       val inheritedRequiredColumns = requiredColumns.filter { c => c.inheritedFromColumn.isDefined }
@@ -209,12 +217,12 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
         def apply(${objectArgs}): ${scalaName} = {
           ${scalaName}(
-            ${primaryColCreator}
-            ${objClassInheritedArgsWithDefaults},
-            ${autoInsertedAtCreator}
-            ${autoUpdatedAtCreator}
-            ${objClassExtraColsArgsWithDefaults}
-            ${objClassDirectArgsWithDefaults}
+            ${appendIfNotEmpty(primaryColCreator,",")}
+            ${appendIfNotEmpty(objClassInheritedArgsWithDefaults,",")}
+            ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}
+            ${appendIfNotEmpty(objClassDirectArgsWithDefaults,",")}
+            ${appendIfNotEmpty(autoInsertedAtCreator,",")}
+            ${appendIfNotEmpty(autoUpdatedAtCreator,",")}
           )
         }
       }
@@ -228,17 +236,17 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
         namingStrategy.column(col.columnName)
       }.mkString(", ")        
 
-      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)}),").getOrElse("")
+      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)})").getOrElse("")
 
       s"""object $scalaName {
 
         def apply(${objectArgs}): ${scalaName} = {
           ${scalaName}(
-            ${primaryColCreator}
-            ${objClassArgsWithDefaults},
-            ${autoInsertedAtCreator}
-            ${autoUpdatedAtCreator} 
-            ${objClassExtraColsArgsWithDefaults}
+            ${appendIfNotEmpty(primaryColCreator,",")}
+            ${appendIfNotEmpty(objClassArgsWithDefaults,",")}
+            ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}
+            ${appendIfNotEmpty(autoInsertedAtCreator,",")}
+            ${appendIfNotEmpty(autoUpdatedAtCreator,",")} 
           )
         }
       }
@@ -285,13 +293,13 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   }
 
   def toCaseClass(): SimpleCaseClass = {
-    println("toCaseClass name:" + name)
+    // println("toCaseClass name:" + name)
     SimpleCaseClass(name,mainCaseClass(),mainObjectClass(),columnCaseClasses(),uniqueKeyCaseClasses(),extraObjects()) 
   }
 
   def findColumn(colName: String): Column = {
-    println("colName: " + colName)
-    println("columns: " + columns.map(_.columnName))
+    // println("colName: " + colName)
+    // println("columns: " + columns.map(_.columnName))
 
     val cOpt = columns.filter(_.columnName == colName).headOption
 

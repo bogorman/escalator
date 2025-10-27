@@ -81,9 +81,9 @@ object FileUtil {
       val fileTemp = new File(filePath)
       if (fileTemp.exists) {
         val result = fileTemp.delete()
-        println("File delete:" + result)
+        // println("File delete:" + result)
       } else {
-        println("File doesnt exist!")
+        // println("File doesnt exist!")
       }
     } catch {
       case ex: Exception => {

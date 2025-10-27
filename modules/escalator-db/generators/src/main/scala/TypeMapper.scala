@@ -4,10 +4,14 @@ object TypeMapper {
 
   val defaultMappings = Map(
     "text" -> "String",
+    "_text" -> "List[String]",
+
     "float8" -> "Double",
     "numeric" -> "BigDecimal",
     "int4" -> "Int",
+    "_int4" -> "List[Int]",
     "int8" -> "Long",
+    "_int8" -> "List[Long]",
     "bool" -> "Boolean",
     "varchar" -> "String",
     "serial" -> "Int",
@@ -22,7 +26,14 @@ object TypeMapper {
     //
     "_varchar" -> "List[String]", //?????
     "Vector(_varchar)" -> "List[String]",
-    "timestamp" -> "escalator.util.Timestamp" 
+    "timestamp" -> "escalator.util.Timestamp",
+    "date" -> "escalator.util.Timestamp",
+
+    //
+    "inet" -> "String",
+
+    // pgvector extension types
+    "vector" -> "Array[Float]"  // Vector embeddings stored as text: "[0.1,0.2,0.3]" 
   )
 
   // val customMappings = Map()

@@ -238,7 +238,7 @@ object ConnectionUtils {
           // val className = attrType.split("_").map(_.toLowerCase.capitalize).mkString("")
           val key = s"$tableName.$columnName"
           mappings(key) = className
-          println(s"  Found mapping: $key -> $className")
+          // println(s"  Found mapping: $key -> $className")
         // case _ =>
           // println(s"  Could not parse constraint for $tableName.$columnName: $checkClause")
       // }

@@ -78,8 +78,8 @@ case class SimpleColumn(tableName: String, columnName: String) {
 
   // want something like CurrentPositionId
   def toType = {
-    println("     SimpleColumn tableName:" + tableName + " " + namingStrategy.table(tableName).toLowerCase)
-    println("     SimpleColumn columnName:" + columnName + " " + camelify(columnName).toLowerCase)
+    // println("     SimpleColumn tableName:" + tableName + " " + namingStrategy.table(tableName).toLowerCase)
+    // println("     SimpleColumn columnName:" + columnName + " " + camelify(columnName).toLowerCase)
 
     val t = if (namingStrategy.table(tableName).toLowerCase == camelify(columnName).toLowerCase) {
       s"${camelify(columnName)}Type"
@@ -88,7 +88,7 @@ case class SimpleColumn(tableName: String, columnName: String) {
     } else {
       s"${namingStrategy.table(tableName)}${camelify(columnName)}"
     }
-    println("   SimpleColumn t:" + t)
+    // println("   SimpleColumn t:" + t)
     t
   }
 }
@@ -175,9 +175,9 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val inheritedTables = ConnectionUtils.getInheritedTables(db)    
     val inheritedTablesMappings = ConnectionUtils.getInheritedTablesMappings(db)
 
-    println("abstractTables:" + abstractTables)
-    println("inheritedTables:" + inheritedTables)
-    println("inheritedTablesMappings:" + inheritedTablesMappings)
+    // println("abstractTables:" + abstractTables)
+    // println("inheritedTables:" + inheritedTables)
+    // println("inheritedTablesMappings:" + inheritedTablesMappings)
 
     val rs: ResultSet = db.getMetaData.getTables(null, options.schema, "%", Array("TABLE"))
 
@@ -186,21 +186,21 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     results(rs).foreach { row =>
       val name = row.getString(TABLE_NAME)
-      println("META name:" + name)
+      // println("META name:" + name)
       metaTables += name
     }
 
     val tables = ((abstractTables ++ inheritedTables ++ metaTables).distinct diff excludedTables).toList
 
-    println("tables:" + tables)
+    // println("tables:" + tables)
 
     val result = tables.flatMap { name => 
       // val name = row.getString(TABLE_NAME)
-      println("Table name: " + name)
+      // println("Table name: " + name)
 
       if (!excludedTables.contains(name)) {
         val uniqueKeys = getUniqueKeys(db, name)
-        println("uniqueKeys:" + uniqueKeys)
+        // println("uniqueKeys:" + uniqueKeys)
 
         val abstractTable: Boolean = abstractTables.contains(name)
         val inheritedFromTable: Option[Table] = if (inheritedTablesMappings.contains(name)){
@@ -257,7 +257,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
                ): Seq[Either[String, Column]] = {
     val primaryKeys = getPrimaryKeys(db, tableName)
 
-    println("primaryKeys:" + primaryKeys)
+    // println("primaryKeys:" + primaryKeys)
     
     val cols = db.getMetaData.getColumns(null, options.schema, tableName, null)
     
@@ -316,7 +316,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
   def getUniqueKeys(db: Connection, tableName: String): Set[UniqueKey] = {
     val uniqueKeys = db.getMetaData.getIndexInfo(null, null, tableName, true, false)
 
-    println("getUniqueKeys: " + tableName)
+    // println("getUniqueKeys: " + tableName)
     val indices = results(uniqueKeys).map { row =>
       val indexName = row.getString("INDEX_NAME")
       val columnName = row.getString("COLUMN_NAME")
@@ -328,14 +328,14 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val filter = row.getString("FILTER_CONDITION")
       val partial = filter != null
 
-      println("[UK] indexName:" + indexName)
-      println("[UK] columnName:" + columnName)
+      // println("[UK] indexName:" + indexName)
+      // println("[UK] columnName:" + columnName)
 
-      println("[UK] nonUnique:" + nonUnique)
-      println("[UK] typeCode:" + typeCode)
-      println("[UK] ordinalPosition:" + ordinalPosition)
+      // println("[UK] nonUnique:" + nonUnique)
+      // println("[UK] typeCode:" + typeCode)
+      // println("[UK] ordinalPosition:" + ordinalPosition)
 
-      println("[UK] partial:" + partial)
+      // println("[UK] partial:" + partial)
 
       // rs.getString("INDEX_NAME") to extract index name
       // rs.getBoolean("NON_UNIQUE") to extract unique information
@@ -389,10 +389,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     FileUtil.createDirectoriesForFolder(postgresFolder+"/tables")
 
     val tableCaseClasses = caseClasses.map { caseClass =>
-      println("generateDaos: " + caseClass)
+      // println("generateDaos: " + caseClass)
 
       val caseClassStat = caseClass.parse[Stat].get
-      println(caseClassStat)
+      // println(caseClassStat)
 
       val caseClassName = caseClassStat.collect {
         case q"case class $tname (...$paramss) extends Persisted" => tname.value
@@ -419,22 +419,22 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val simpleCaseClass = table.toCaseClass
       val caseClass = simpleCaseClass.mainCaseClass
 
-      println("generateDaos: " + caseClass)
+      // println("generateDaos: " + caseClass)
 
       val caseClassStat = caseClass.parse[Stat].get
-      println(caseClassStat)
+      // println(caseClassStat)
 
       val caseClassName = caseClassStat.collect {
         case q"case class $tname (...$paramss) extends Persisted" => tname.value
       }.head
 
-      println("caseClassName:" + caseClassName)
+      // println("caseClassName:" + caseClassName)
 
       val tableClass = pluralize(caseClassName)
-      println("tableClass:" + tableClass)
+      // println("tableClass:" + tableClass)
 
       val tableClassName = tableClass+"Table"
-      println("tableClassName:" + tableClassName)
+      // println("tableClassName:" + tableClassName)
 
       val traitSource = GeneratorTemplates.tableTraitTemplate(table, packageName, caseClassName, tableClass, tableClassName)
       val daoSource = GeneratorTemplates.tableDaoTemplate(customGen, table, packageName, caseClassName, tableClass, tableClassName)
@@ -462,7 +462,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val simpleCaseClass = table.toCaseClass
       val caseClass = simpleCaseClass.mainCaseClass
 
-      println("generateAppRepositories: " + caseClass)
+      // println("generateAppRepositories: " + caseClass)
 
       val caseClassStat = caseClass.parse[Stat].get
       val caseClassName = caseClassStat.collect {
@@ -488,7 +488,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         val simpleCaseClass = table.toCaseClass
         val caseClass = simpleCaseClass.mainCaseClass
 
-        println("generateModelEvents: " + caseClass)
+        // println("generateModelEvents: " + caseClass)
 
         val caseClassStat = caseClass.parse[Stat].get
         val caseClassName = caseClassStat.collect {
@@ -504,7 +504,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
   }
 
   def cleanupExistingGeneratedFiles() = {
-    println("cleanupExistingGeneratedFiles")
+    // println("cleanupExistingGeneratedFiles")
     cleanupExistingGeneratedFilesInFolder(modelsBaseFolder)
     cleanupExistingGeneratedFilesInFolder(modelsBaseFolder+"/events")
     cleanupExistingGeneratedFilesInFolder(persistenceBaseFolder)
@@ -515,7 +515,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     }
     
     // Clean aggregates folder if specified
-    println("aggregatesFolder:" + options.aggregatesFolder)
+    // println("aggregatesFolder:" + options.aggregatesFolder)
 
     if (options.aggregatesFolder.nonEmpty) {
       cleanupExistingGeneratedFilesInFolder(options.aggregatesFolder,true)
@@ -561,15 +561,15 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     } else {
       val scalaFiles = FileUtil.getListOfFiles(f, List("scala"))
       
-      println("cleanupExistingGeneratedFilesInFolder:" + folder + " " + scalaFiles.size)
+      // println("cleanupExistingGeneratedFilesInFolder:" + folder + " " + scalaFiles.size)
       scalaFiles.foreach { scalaFile =>
         val scalaFilePath = scalaFile.getPath
         val content = FileUtil.read(scalaFilePath)
         if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
-          println("DELETE FILE:" + scalaFilePath)        
+          // println("DELETE FILE:" + scalaFilePath)        
           FileUtil.delete(scalaFilePath)
         } else {
-          println("SKIPPING FILE:" + scalaFilePath + ".")
+          // println("SKIPPING FILE:" + scalaFilePath + ".")
         }
       }
     }
@@ -584,10 +584,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val scalaFilePath = scalaFile.getPath
       val content = FileUtil.read(scalaFilePath)
       if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
-        println("DELETE FILE:" + scalaFilePath)        
+        // println("DELETE FILE:" + scalaFilePath)        
         FileUtil.delete(scalaFilePath)
       } else {
-        println("SKIPPING FILE:" + scalaFilePath + ".")
+        // println("SKIPPING FILE:" + scalaFilePath + ".")
       }
     }
     
@@ -759,9 +759,18 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   //   mappings.toMap
   // }
+
+  def formatConstantName(scalaClassName: String, constant: String): String = {
+    val fc = constant.replaceAll("-", "_").replaceAll(" ","").replaceAll("&","_")
+    if (fc.headOption.exists(_.isDigit)){
+      s"${scalaClassName}${fc}"
+    } else {
+      fc
+    }
+  }
   
   def generateAttributeTypes(db: Connection): Unit = {
-    println("Generating AttributeTypes from database...")
+    // println("Generating AttributeTypes from database...")
     
     val attributeTypeMap = queryAttributeTypesFromDatabase(db)
     
@@ -783,38 +792,38 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       
       // Build object with constants
       val constants = values.map { value =>
-        val constantName = TextUtil.snakeToUpperCamel(value.ident.replace("-", "_"))
-        s"  val ${constantName} = ${scalaClassName}(\"${value.ident}\")"
+        // val constantName = TextUtil.snakeToUpperCamel(value.ident.replace("-", "_"))
+        s"  val ${formatConstantName(scalaClassName,value.ident)} = ${scalaClassName}(\"${value.ident}\")"
       }.mkString("\n")
       
       val objectDef = s"object ${scalaClassName}s {\n${constants}\n}"
       allTypeObjects += objectDef
     }
 
-    println("attributeTypeMapping")
-    println(attributeTypeMapping)
+    // println("attributeTypeMapping")
+    // println(attributeTypeMapping)
     
     // Generate combined files
     generateAllAttributeTypesFile(allTypeClasses.toList)
     generateAllAttributeObjectsFile(allTypeObjects.toList)
     generatePostgresDbTypesEncoder()
     
-    println(s"Generated ${generatedAttributeTypes.size} AttributeType classes: ${generatedAttributeTypes.mkString(", ")}")
+    // println(s"Generated ${generatedAttributeTypes.size} AttributeType classes: ${generatedAttributeTypes.mkString(", ")}")
   }
   
   def generateAllAttributeTypesFile(typeDefinitions: List[String]): Unit = {
     try {
       val attributesFolder = modelsBaseFolder//.replace("/shared/","/shared-common/")
-      println(s"Generating combined AttributeTypes.scala with ${typeDefinitions.size} types")
-      println(s"attributesFolder is: ${attributesFolder}")
+      // println(s"Generating combined AttributeTypes.scala with ${typeDefinitions.size} types")
+      // println(s"attributesFolder is: ${attributesFolder}")
       val content = GeneratorTemplates.allAttributeTypesTemplate(packageName, typeDefinitions)
       val formattedContent = formatCode(content)
       val filePath = s"${attributesFolder}/AttributeTypes.scala"
       
-      println(s"Writing AttributeTypes file to: ${filePath}")
+      // println(s"Writing AttributeTypes file to: ${filePath}")
       FileUtil.createDirectoriesForFile(filePath)
       FileUtil.write(filePath, formattedContent) // Always overwrite
-      println(s"Successfully generated AttributeTypes.scala at ${filePath}")
+      // println(s"Successfully generated AttributeTypes.scala at ${filePath}")
     } catch {
       case ex: Exception =>
         println(s"Error generating AttributeTypes file: ${ex.getMessage}")
@@ -825,15 +834,15 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
   def generateAllAttributeObjectsFile(objectDefinitions: List[String]): Unit = {
     try {
       val attributesFolder = modelsBaseFolder//.replace("/shared/","/shared-common/")
-      println(s"Generating combined AttributeObjects.scala with ${objectDefinitions.size} objects")
+      // println(s"Generating combined AttributeObjects.scala with ${objectDefinitions.size} objects")
       val content = GeneratorTemplates.allAttributeObjectsTemplate(packageName, objectDefinitions)
       val formattedContent = formatCode(content)  
       val filePath = s"${attributesFolder}/AttributeObjects.scala"
       
-      println(s"Writing AttributeObjects file to: ${filePath}")
+      // println(s"Writing AttributeObjects file to: ${filePath}")
       FileUtil.createDirectoriesForFile(filePath)
       FileUtil.write(filePath, formattedContent) // Always overwrite
-      println(s"Successfully generated AttributeObjects.scala")
+      // println(s"Successfully generated AttributeObjects.scala")
     } catch {
       case ex: Exception =>
         println(s"Error generating AttributeObjects file: ${ex.getMessage}")
@@ -934,7 +943,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     val plainForeignKeys = getForeignKeys(db)
 
-    println("plainForeignKeys:" + plainForeignKeys.size)
+    // println("plainForeignKeys:" + plainForeignKeys.size)
     // println(plainForeignKeys)
 
     // val crossKeys = 
@@ -949,7 +958,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       ForeignKey(fk.from, resolve(fk.to))
     }
 
-    println(foreignKeys)
+    // println(foreignKeys)
 
     // Generate AttributeTypes FIRST - this must run before other generation
     generateAttributeTypes(db)
@@ -960,7 +969,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     val simpleCaseClasses = generateCaseCasses(tables).toList
 
-    println(simpleCaseClasses)
+    // println(simpleCaseClasses)
 
     val sharedModelTypes = MList.empty[String]
     val sharedModels = MList.empty[String]
@@ -1013,20 +1022,20 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
     generateTableDaos(tables)
 
-    println("generateAppRepositories:" + options.generateAppRepositories)
+    // println("generateAppRepositories:" + options.generateAppRepositories)
 
     if (options.generateAppRepositories) {
       generateAppRepositories(tables)
     }
 
-    println("generateEvents:" + options.generateEvents)
+    // println("generateEvents:" + options.generateEvents)
     if (options.generateEvents) {
       generateModelEvents(tables)
     }
 
-    println("generateAggregates:" + options.generateAggregates)
+    // println("generateAggregates:" + options.generateAggregates)
     if (options.generateAggregates && options.aggregateRootTables.nonEmpty) {
-      println(s"Generating ${options.aggregateRootTables.size} aggregate roots: ${options.aggregateRootTables.mkString(", ")}")
+      // println(s"Generating ${options.aggregateRootTables.size} aggregate roots: ${options.aggregateRootTables.mkString(", ")}")
 
       val aggGen = new AggregateGenerator(allTables.toList,namingStrategy,options,customGen)
 
@@ -1179,7 +1188,7 @@ object CodeGenerator {
   }
 
   def reset(codegenOptions: CodegenOptions,customGen: CustomGenerator): Unit = {
-    println("running reset")
+    // println("running reset")
 
     customGen.setup()
 

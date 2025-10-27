@@ -8,19 +8,19 @@ trait GeneratorNamingStrategy extends NamingStrategy {
 
   override def default(s: String) = {
     val d = SnakeCase.default(s)
-    println(s"NS default: ${s} -> ${d}")
+    // println(s"NS default: ${s} -> ${d}")
     d
   }
 
   override def column(s: String): String = {
     val c = snakeToLowerCamel(s)
-    println(s"NS column: ${s} -> ${c}")
+    // println(s"NS column: ${s} -> ${c}")
     c    
   }  
 
   override def table(s: String) = {
     val t = snakeToUpperCamel(singularize(s)) 
-    println(s"NS table: ${t} -> ${s}")
+    // println(s"NS table: ${t} -> ${s}")
     t
   }
 }
