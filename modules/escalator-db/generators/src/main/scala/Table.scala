@@ -262,6 +262,8 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   def extraObjects(): String = {
     val uks = uniqueKeys.filter { k => k.keyName.contains("_enum") }
 
+    // 
+
     val objs = uks.map { uk =>
       val tn = uk.tableName
       val cn = uk.cols.head.columnName
@@ -269,6 +271,10 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       val list = ConnectionUtils.getStringList(db,s"select ${cn} from ${tn}")
 
       val col = findColumn(cn)
+
+      // val arg = col.toArg(namingStrategy, name, true)
+      // col.toArg(namingStrategy, name, true)
+      val showCol = namingStrategy.column(cn)
 
       val caseClass = col.toDefn(tn, true)
 
@@ -279,7 +285,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       s"""
       import cats.Show
       object ${caseClass} {
-        implicit val defaultShow: Show[${caseClass}] = _.${cn.toLowerCase}
+        implicit val defaultShow: Show[${caseClass}] = _.${showCol}
 
         implicit def strTo${caseClass}(str: String): ${caseClass} = {
           ${caseClass}(str)
