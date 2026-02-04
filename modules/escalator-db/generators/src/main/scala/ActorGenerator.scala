@@ -1,0 +1,805 @@
+package escalator.db.generators
+
+import java.sql.Connection
+import io.getquill.NamingStrategy
+import escalator.util.disk._
+import escalator.util._
+import TextUtil._
+
+/**
+ * Generator for Pekko actors that can work with or without aggregate infrastructure
+ *
+ * Two modes:
+ * 1. Aggregate mode (generateAggregates=true, generatePekkoActors=true)
+ *    - Actors in: core/repositories/aggregates/actors/
+ *    - Uses: BaseUserState, UserStateRepository
+ *
+ * 2. Standalone mode (generateAggregates=false, generatePekkoActors=true)
+ *    - Actors in: core/actors/user/
+ *    - Uses: RocketMoonRepository, user-defined loadState()
+ */
+class ActorGenerator(
+    namingStrategy: NamingStrategy,
+    options: CodegenOptions
+) {
+
+  val isStandaloneMode: Boolean = !options.generateAggregates && options.generatePekkoActors
+
+  def generateActors(
+      db: Connection,
+      rootTableName: String,
+      referenceTree: ReferenceTree
+  ): Unit = {
+    val aggregateName = namingStrategy.table(rootTableName)
+    val rootEntityFieldName = singularize(rootTableName.toLowerCase)
+
+    val extractionCases = generateEventExtractionCases(db, referenceTree, rootTableName, aggregateName, rootEntityFieldName)
+
+    val actorBaseTrait = if (isStandaloneMode) {
+      generateStandaloneActorBase(aggregateName, rootEntityFieldName, extractionCases)
+    } else {
+      generateAggregateActorBase(aggregateName, rootEntityFieldName, extractionCases)
+    }
+
+    val actorPlaceholder = if (isStandaloneMode) {
+      generateStandaloneActorPlaceholder(aggregateName, rootEntityFieldName)
+    } else {
+      generateAggregateActorPlaceholder(aggregateName, rootEntityFieldName)
+    }
+
+    val baseState = if (isStandaloneMode) {
+      generateMinimalBaseState(aggregateName, rootEntityFieldName)
+    } else {
+      "" // Aggregate mode generates full BaseState separately
+    }
+
+    writeActorFiles(aggregateName, rootEntityFieldName, actorBaseTrait, actorPlaceholder, baseState)
+  }
+
+  /**
+   * Generate event extraction cases (same for both modes)
+   */
+  def generateEventExtractionCases(
+      db: Connection,
+      tree: ReferenceTree,
+      rootTableName: String,
+      aggregateName: String,
+      rootEntityFieldName: String
+  ): String = {
+    import java.sql.DatabaseMetaData
+
+    def isColumnNullable(tableName: String, columnName: String): Boolean = {
+      val cols = db.getMetaData.getColumns(null, options.schema, tableName, columnName)
+      if (cols.next()) {
+        cols.getBoolean("IS_NULLABLE")
+      } else {
+        false
+      }
+    }
+
+    val rootCase = s"""      // Root ${rootEntityFieldName} events
+      case e: ${aggregateName}Event =>
+        e match {
+          case ${aggregateName}Created(entity, _, _, _) => Some(entity.id)
+          case ${aggregateName}Updated(entity, _, _, _, _) => Some(entity.id)
+          case ${aggregateName}Deleted(entity, _, _, _) => Some(entity.id)
+        }"""
+
+    val nodesByTable = tree.nodes.filter(_.depth == 0).groupBy(_.table)
+
+    val childCases = nodesByTable.map { case (childTable, nodes) =>
+      val childEventName = namingStrategy.table(singularize(childTable))
+
+      val primaryNode = if (nodes.size > 1) {
+        nodes
+          .sortBy { node =>
+            val isNullable = isColumnNullable(node.table, node.foreignKeyColumn)
+            val isUserId = node.foreignKeyColumn == s"${rootEntityFieldName}_id"
+            (if (isNullable) 1 else 0, if (isUserId) 0 else 1)
+          }
+          .head
+      } else {
+        nodes.head
+      }
+
+      val fkColumnName = primaryNode.foreignKeyColumn
+      val fkFieldName = namingStrategy.column(fkColumnName)
+      val isNullable = isColumnNullable(childTable, fkColumnName)
+
+      val extractionExpr = if (isNullable) {
+        s"entity.${fkFieldName}"
+      } else {
+        s"Some(entity.${fkFieldName})"
+      }
+
+      val otherFKsComment = if (nodes.size > 1) {
+        val otherFKs = nodes.filter(_ != primaryNode).map(_.foreignKeyColumn).mkString(", ")
+        s" (primary FK; table also has: ${otherFKs})"
+      } else {
+        ""
+      }
+
+      s"""
+      // ${childTable} events - extract from ${fkFieldName} field (nullable: ${isNullable})${otherFKsComment}
+      case e: ${childEventName}Event =>
+        e match {
+          case ${childEventName}Created(entity, _, _, _) => ${extractionExpr}
+          case ${childEventName}Updated(entity, _, _, _, _) => ${extractionExpr}
+          case ${childEventName}Deleted(entity, _, _, _) => ${extractionExpr}
+        }"""
+    }.mkString("\n")
+
+    rootCase + childCases
+  }
+
+  /**
+   * Generate standalone actor base (no aggregate dependencies)
+   */
+  def generateStandaloneActorBase(
+      aggregateName: String,
+      rootEntityFieldName: String,
+      extractionCases: String
+  ): String = {
+    s"""package ${options.packageName}.core.actors.${rootEntityFieldName}
+
+${GeneratorTemplates.autoGeneratedComment}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Success, Failure}
+import org.apache.pekko.actor.{Actor, ActorLogging, ActorRef}
+import monix.execution.Scheduler
+import monix.eval.Task
+import escalator.ddd.Event
+import escalator.util.logging.Logger
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+import ${options.packageName}.cache.distributed.DistributedCacheManager
+import ${options.packageName}.core.repositories.${options.appName}Repository
+
+/**
+ * Auto-generated base trait for ${aggregateName} actor (Standalone mode)
+ * Contains all boilerplate logic - DO NOT EDIT
+ *
+ * This trait is regenerated on every 'sbt dbGenerate'
+ * Custom logic goes in ${aggregateName}Actor class
+ */
+trait ${aggregateName}ActorBase extends Actor with ActorLogging {
+
+  // Abstract members - provided by concrete class
+  def ${rootEntityFieldName}Id: ${aggregateName}Id
+  def repository: ${options.appName}Repository
+  def distributedCacheManager: DistributedCacheManager
+  implicit def ec: ExecutionContext
+  implicit def scheduler: Scheduler
+  implicit def logger: Logger
+
+  // User must implement state loading
+  def loadState(): Task[Base${aggregateName}State]
+
+  // State management
+  protected var state: Base${aggregateName}State = Base${aggregateName}State.empty(${rootEntityFieldName}Id)
+  protected var loaded: Boolean = false
+  protected var clientConnection: Option[ActorRef] = None
+
+  override def preStart(): Unit = {
+    super.preStart()
+    log.info(s"${aggregateName}Actor starting for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    loadStateFromCache()
+  }
+
+  override def postStop(): Unit = {
+    log.info(s"${aggregateName}Actor stopping for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    saveStateToCache()
+    super.postStop()
+  }
+
+  /**
+   * Default message handling - can be used by concrete class
+   */
+  def baseReceive: Receive = {
+    case ${aggregateName}Actor.${aggregateName}EventMessage(event) =>
+      handleEvent(event)
+
+    case ${aggregateName}Actor.Get${aggregateName}State(replyTo) =>
+      replyTo ! ${aggregateName}Actor.${aggregateName}StateResponse(state)
+
+    case ${aggregateName}Actor.RegisterClient(clientRef) =>
+      registerClient(clientRef)
+
+    case ${aggregateName}Actor.UnregisterClient =>
+      unregisterClient()
+
+    case ${aggregateName}Actor.Stop${aggregateName} =>
+      context.stop(self)
+  }
+
+  /**
+   * Register WebSocket client for real-time updates
+   */
+  protected def registerClient(clientRef: ActorRef): Unit = {
+    clientConnection = Some(clientRef)
+    log.info(s"Client registered for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    pushStateUpdate()
+  }
+
+  /**
+   * Unregister WebSocket client
+   */
+  protected def unregisterClient(): Unit = {
+    clientConnection = None
+    log.info(s"Client unregistered for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+  }
+
+  /**
+   * Push state update to connected WebSocket client
+   */
+  protected def pushStateUpdate(): Unit = {
+    clientConnection.foreach { client =>
+      client ! ${aggregateName}Actor.PushStateUpdate(state)
+    }
+  }
+
+  /**
+   * Cache-first state loading - tries cache first, calls user's loadState() as fallback
+   */
+  protected def loadStateFromCache(): Unit = {
+    if (loaded) return
+
+    distributedCacheManager.get${aggregateName}State(${rootEntityFieldName}Id).onComplete {
+      case Success(Some(cachedState)) =>
+        state = cachedState
+        loaded = true
+        log.info(s"Loaded ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from cache (version: $${cachedState.version})")
+
+      case Success(None) =>
+        log.debug(s"Cache miss for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}, loading from user-defined loadState()")
+        loadState().runToFuture.onComplete {
+          case Success(userState) =>
+            state = userState
+            loaded = true
+            log.info(s"Loaded ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from loadState() (version: $${userState.version})")
+            distributedCacheManager.save${aggregateName}State(${rootEntityFieldName}Id, userState)
+
+          case Failure(ex) =>
+            log.error(ex, s"Failed to load ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from loadState()")
+        }
+
+      case Failure(ex) =>
+        log.error(ex, s"Failed to load ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from cache")
+    }
+  }
+
+  /**
+   * Save state to cache
+   */
+  protected def saveStateToCache(): Unit = {
+    if (loaded) {
+      distributedCacheManager.save${aggregateName}State(${rootEntityFieldName}Id, state)
+    }
+  }
+
+  /**
+   * Handle event application
+   */
+  protected def handleEvent(event: Event): Unit = {
+    try {
+      state = state.applyEvent(event)
+      saveStateToCache()
+      pushStateUpdate()
+      log.debug(s"Applied event $${event.getClass.getSimpleName} to ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    } catch {
+      case ex: Exception =>
+        log.error(ex, s"Failed to apply event $${event.getClass.getSimpleName} to ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    }
+  }
+}
+
+/**
+ * Companion object for ${aggregateName}ActorBase
+ * Contains auto-generated extraction logic for routing events to correct actor instances
+ */
+object ${aggregateName}ActorBase {
+
+  /**
+   * Extract ${rootEntityFieldName}Id from event
+   * Auto-generated based on aggregate reference tree
+   *
+   * This method is regenerated every time dbGenerate runs, ensuring it stays
+   * up-to-date with schema changes (new tables, nullable column changes, etc.)
+   */
+  def extract${aggregateName}Id(event: Event): Option[${aggregateName}Id] = {
+    import ${options.packageName}.models.events._
+
+    event match {
+${extractionCases}
+
+      case _ => None // Event not related to ${aggregateName} aggregate
+    }
+  }
+}
+"""
+  }
+
+  /**
+   * Generate aggregate actor base (with aggregate dependencies)
+   */
+  def generateAggregateActorBase(
+      aggregateName: String,
+      rootEntityFieldName: String,
+      extractionCases: String
+  ): String = {
+    // Similar to old generateUserActorBaseTrait in AggregateGenerator
+    // Uses UserStateRepository, loads from aggregate state
+    s"""package ${options.packageName}.core.actors.${rootEntityFieldName}
+
+${GeneratorTemplates.autoGeneratedComment}
+
+import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Success, Failure}
+import org.apache.pekko.actor.{Actor, ActorLogging, ActorRef}
+import monix.execution.Scheduler
+import escalator.ddd.Event
+import escalator.util.logging.Logger
+import ${options.packageName}.models._
+import ${options.packageName}.models.events._
+import ${options.packageName}.core.actors.state.${rootEntityFieldName}.{ Base${aggregateName}State, ${aggregateName}StateRepository }
+import ${options.packageName}.core.repositories.${options.appName}Repository
+import ${options.packageName}.cache.distributed.DistributedCacheManager
+
+/**
+ * Auto-generated base trait for ${aggregateName} actor (Aggregate mode)
+ * Contains all boilerplate logic - DO NOT EDIT
+ *
+ * This trait is regenerated on every 'sbt dbGenerate'
+ * Custom logic goes in ${aggregateName}Actor class
+ */
+trait ${aggregateName}ActorBase extends Actor with ActorLogging {
+
+  // Abstract members - provided by concrete class
+  def ${rootEntityFieldName}Id: ${aggregateName}Id
+  def repository: ${options.appName}Repository
+  def distributedCacheManager: DistributedCacheManager
+  implicit def ec: ExecutionContext
+  implicit def scheduler: Scheduler
+  implicit def logger: Logger
+
+  // State management
+  protected var state: Base${aggregateName}State = Base${aggregateName}State.empty(${rootEntityFieldName}Id)
+  protected var loaded: Boolean = false
+  protected var clientConnection: Option[ActorRef] = None
+
+  override def preStart(): Unit = {
+    super.preStart()
+    log.info(s"${aggregateName}Actor starting for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    loadStateFromCache()
+  }
+
+  override def postStop(): Unit = {
+    log.info(s"${aggregateName}Actor stopping for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    saveStateToCache()
+    super.postStop()
+  }
+
+  /**
+   * Default message handling - can be used by concrete class
+   */
+  def baseReceive: Receive = {
+    case ${aggregateName}Actor.${aggregateName}EventMessage(event) =>
+      handleEvent(event)
+
+    case ${aggregateName}Actor.Get${aggregateName}State(replyTo) =>
+      replyTo ! ${aggregateName}Actor.${aggregateName}StateResponse(state)
+
+    case ${aggregateName}Actor.RegisterClient(clientRef) =>
+      registerClient(clientRef)
+
+    case ${aggregateName}Actor.UnregisterClient =>
+      unregisterClient()
+
+    case ${aggregateName}Actor.Stop${aggregateName} =>
+      context.stop(self)
+  }
+
+  /**
+   * Register WebSocket client for real-time updates
+   */
+  protected def registerClient(clientRef: ActorRef): Unit = {
+    clientConnection = Some(clientRef)
+    log.info(s"Client registered for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    pushStateUpdate()
+  }
+
+  /**
+   * Unregister WebSocket client
+   */
+  protected def unregisterClient(): Unit = {
+    clientConnection = None
+    log.info(s"Client unregistered for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+  }
+
+  /**
+   * Push state update to connected WebSocket client
+   */
+  protected def pushStateUpdate(): Unit = {
+    clientConnection.foreach { client =>
+      client ! ${aggregateName}Actor.PushStateUpdate(state)
+    }
+  }
+
+  /**
+   * Cache-first state loading - tries cache first, falls back to database
+   */
+  protected def loadStateFromCache(): Unit = {
+    if (loaded) return
+
+    distributedCacheManager.get${aggregateName}State(${rootEntityFieldName}Id).onComplete {
+      case Success(Some(cachedState)) =>
+        state = cachedState
+        loaded = true
+        log.info(s"Loaded ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from cache (version: $${cachedState.version})")
+
+      case Success(None) =>
+        log.debug(s"Cache miss for ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}, loading from database")
+        ${aggregateName}StateRepository.load${aggregateName}State(repository, ${rootEntityFieldName}Id).runToFuture.onComplete {
+          case Success(Some(dbState)) =>
+            state = dbState
+            loaded = true
+            log.info(s"Loaded ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from database (version: $${dbState.version})")
+            distributedCacheManager.save${aggregateName}State(${rootEntityFieldName}Id, dbState)
+
+          case Success(None) =>
+            log.warning(s"${aggregateName} $${${rootEntityFieldName}Id.id} not found in database")
+            loaded = true
+
+          case Failure(ex) =>
+            log.error(ex, s"Failed to load ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from database")
+        }
+
+      case Failure(ex) =>
+        log.error(ex, s"Failed to load ${rootEntityFieldName} $${${rootEntityFieldName}Id.id} from cache")
+    }
+  }
+
+  /**
+   * Save state to cache
+   */
+  protected def saveStateToCache(): Unit = {
+    if (loaded) {
+      distributedCacheManager.save${aggregateName}State(${rootEntityFieldName}Id, state)
+    }
+  }
+
+  /**
+   * Handle event application
+   */
+  protected def handleEvent(event: Event): Unit = {
+    try {
+      state = state.applyEvent(event)
+      saveStateToCache()
+      pushStateUpdate()
+      log.debug(s"Applied event $${event.getClass.getSimpleName} to ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    } catch {
+      case ex: Exception =>
+        log.error(ex, s"Failed to apply event $${event.getClass.getSimpleName} to ${rootEntityFieldName} $${${rootEntityFieldName}Id.id}")
+    }
+  }
+}
+
+/**
+ * Companion object for ${aggregateName}ActorBase
+ * Contains auto-generated extraction logic for routing events to correct actor instances
+ */
+object ${aggregateName}ActorBase {
+
+  /**
+   * Extract ${rootEntityFieldName}Id from event
+   * Auto-generated based on aggregate reference tree
+   *
+   * This method is regenerated every time dbGenerate runs, ensuring it stays
+   * up-to-date with schema changes (new tables, nullable column changes, etc.)
+   */
+  def extract${aggregateName}Id(event: Event): Option[${aggregateName}Id] = {
+    import ${options.packageName}.models.events._
+
+    event match {
+${extractionCases}
+
+      case _ => None // Event not related to ${aggregateName} aggregate
+    }
+  }
+}
+"""
+  }
+
+  /**
+   * Generate standalone actor placeholder (user-editable)
+   */
+  def generateStandaloneActorPlaceholder(aggregateName: String, rootEntityFieldName: String): String = {
+    s"""package ${options.packageName}.core.actors.${rootEntityFieldName}
+
+// THIS FILE IS SAFE TO EDIT - IT WILL NOT BE REGENERATED
+
+import scala.concurrent.ExecutionContext
+import org.apache.pekko.actor.{ActorRef, Props}
+import monix.execution.Scheduler
+import monix.eval.Task
+import escalator.ddd.Event
+import escalator.util.logging.Logger
+import ${options.packageName}.models._
+import ${options.packageName}.cache.distributed.DistributedCacheManager
+import ${options.packageName}.core.repositories.${options.appName}Repository
+
+/**
+  * ${aggregateName} Actor - manages state for a single ${rootEntityFieldName} via cluster sharding
+  *
+  * Extends ${aggregateName}ActorBase (auto-generated) with custom business logic
+  */
+class ${aggregateName}Actor(
+    val ${rootEntityFieldName}Id: ${aggregateName}Id,
+    val repository: ${options.appName}Repository,
+    val distributedCacheManager: DistributedCacheManager
+)(implicit
+    val ec: ExecutionContext,
+    val scheduler: Scheduler,
+    val logger: Logger
+) extends ${aggregateName}ActorBase {
+
+  // Default: use generated message handling
+  override def receive: Receive = baseReceive
+
+  /**
+    * Implement state loading using the repository
+    *
+    * Example implementation:
+    * def loadState(): Task[Base${aggregateName}State] = {
+    *   repository.${rootEntityFieldName}s.findById(${rootEntityFieldName}Id).map {
+    *     case Some(${rootEntityFieldName}) =>
+    *       ${aggregateName}State(
+    *         ${rootEntityFieldName}Id = ${rootEntityFieldName}.id,
+    *         name = ${rootEntityFieldName}.name,
+    *         version = 0L,
+    *         lastUpdated = java.sql.Timestamp.from(java.time.Instant.now())
+    *       )
+    *     case None => Base${aggregateName}State.empty(${rootEntityFieldName}Id)
+    *   }
+    * }
+    */
+  override def loadState(): Task[Base${aggregateName}State] = {
+    // TODO: Implement your custom state loading logic here
+    Task.pure(Base${aggregateName}State.empty(${rootEntityFieldName}Id))
+  }
+
+  // --- Custom Logic Below ---
+  // Add custom message handlers and business logic here
+
+  // Example: override receive to add custom messages
+  // override def receive: Receive = customReceive.orElse(baseReceive)
+  //
+  // def customReceive: Receive = {
+  //   case CustomMessage(data) => handleCustomMessage(data)
+  // }
+  //
+  // private def handleCustomMessage(data: String): Unit = {
+  //   // Custom business logic using state
+  // }
+}
+
+object ${aggregateName}Actor {
+
+  // Message protocol
+  case class ${aggregateName}EventMessage(event: Event)
+  case class Get${aggregateName}State(replyTo: ActorRef)
+  case class ${aggregateName}StateResponse(state: Base${aggregateName}State)
+
+  // WebSocket client management
+  case class RegisterClient(clientRef: ActorRef)
+  case object UnregisterClient
+  case class PushStateUpdate(state: Base${aggregateName}State)
+  case object Stop${aggregateName}
+
+  /**
+    * Props factory for creating ${aggregateName}Actor instances
+    */
+  def props(
+      ${rootEntityFieldName}Id: ${aggregateName}Id,
+      repository: ${options.appName}Repository,
+      distributedCacheManager: DistributedCacheManager
+  )(implicit
+      ec: ExecutionContext,
+      scheduler: Scheduler,
+      logger: Logger
+  ): Props = Props(new ${aggregateName}Actor(${rootEntityFieldName}Id, repository, distributedCacheManager))
+
+}
+"""
+  }
+
+  /**
+   * Generate aggregate actor placeholder (user-editable)
+   */
+  def generateAggregateActorPlaceholder(aggregateName: String, rootEntityFieldName: String): String = {
+    s"""package ${options.packageName}.core.actors.${rootEntityFieldName}
+
+// THIS FILE IS SAFE TO EDIT - IT WILL NOT BE REGENERATED
+
+import scala.concurrent.ExecutionContext
+import org.apache.pekko.actor.{ActorRef, Props}
+import monix.execution.Scheduler
+import escalator.ddd.Event
+import escalator.util.logging.Logger
+import ${options.packageName}.models._
+import ${options.packageName}.core.actors.state.${rootEntityFieldName}.{ Base${aggregateName}State, ${aggregateName}StateRepository }
+import ${options.packageName}.core.repositories.${options.appName}Repository
+import ${options.packageName}.cache.distributed.DistributedCacheManager
+
+/**
+  * ${aggregateName} Actor - manages state for a single ${rootEntityFieldName} via cluster sharding
+  *
+  * Extends ${aggregateName}ActorBase (auto-generated) with custom business logic
+  */
+class ${aggregateName}Actor(
+    val ${rootEntityFieldName}Id: ${aggregateName}Id,
+    val repository: ${options.appName}Repository,
+    val distributedCacheManager: DistributedCacheManager
+)(implicit
+    val ec: ExecutionContext,
+    val scheduler: Scheduler,
+    val logger: Logger
+) extends ${aggregateName}ActorBase {
+
+  // Default: use generated message handling
+  override def receive: Receive = baseReceive
+
+  // --- Custom Logic Below ---
+  // Add custom message handlers and business logic here
+
+  // Example: override receive to add custom messages
+  // override def receive: Receive = customReceive.orElse(baseReceive)
+  //
+  // def customReceive: Receive = {
+  //   case CustomMessage(data) => handleCustomMessage(data)
+  // }
+  //
+  // private def handleCustomMessage(data: String): Unit = {
+  //   // Custom business logic using state
+  // }
+}
+
+object ${aggregateName}Actor {
+
+  // Message protocol
+  case class ${aggregateName}EventMessage(event: Event)
+  case class Get${aggregateName}State(replyTo: ActorRef)
+  case class ${aggregateName}StateResponse(state: Base${aggregateName}State)
+
+  // WebSocket client management
+  case class RegisterClient(clientRef: ActorRef)
+  case object UnregisterClient
+  case class PushStateUpdate(state: Base${aggregateName}State)
+  case object Stop${aggregateName}
+
+  /**
+    * Props factory for creating ${aggregateName}Actor instances
+    */
+  def props(
+      ${rootEntityFieldName}Id: ${aggregateName}Id,
+      repository: ${options.appName}Repository,
+      distributedCacheManager: DistributedCacheManager
+  )(implicit
+      ec: ExecutionContext,
+      scheduler: Scheduler,
+      logger: Logger
+  ): Props = Props(new ${aggregateName}Actor(${rootEntityFieldName}Id, repository, distributedCacheManager))
+
+}
+"""
+  }
+
+  /**
+   * Generate minimal BaseUserState scaffold for standalone mode
+   */
+  def generateMinimalBaseState(aggregateName: String, rootEntityFieldName: String): String = {
+    s"""package ${options.packageName}.core.actors.${rootEntityFieldName}
+
+${GeneratorTemplates.autoGeneratedComment}
+
+import java.sql.Timestamp
+import escalator.ddd.Event
+import ${options.packageName}.models._
+
+/**
+ * Minimal base state scaffold for ${aggregateName} actor (Standalone mode)
+ *
+ * Users should extend this to create their own ${aggregateName}State with custom fields
+ *
+ * Example:
+ * case class ${aggregateName}State(
+ *   ${rootEntityFieldName}Id: ${aggregateName}Id,
+ *   name: String,
+ *   email: String,
+ *   version: Long,
+ *   lastUpdated: Timestamp
+ * ) extends Base${aggregateName}State {
+ *   def applyEvent(event: Event): Base${aggregateName}State = event match {
+ *     case ${aggregateName}Updated(user, _, _, _, _) =>
+ *       copy(name = user.name, email = user.email)
+ *     // ... custom logic
+ *   }
+ * }
+ */
+trait Base${aggregateName}State {
+  def ${rootEntityFieldName}Id: ${aggregateName}Id
+  def version: Long
+  def lastUpdated: Timestamp
+
+  /**
+   * Apply an event to the state - users must implement
+   */
+  def applyEvent(event: Event): Base${aggregateName}State
+}
+
+object Base${aggregateName}State {
+  /**
+   * Empty state for initialization
+   */
+  def empty(id: ${aggregateName}Id): Base${aggregateName}State = Empty${aggregateName}State(id)
+
+  /**
+   * Default empty implementation
+   */
+  private case class Empty${aggregateName}State(
+      ${rootEntityFieldName}Id: ${aggregateName}Id,
+      version: Long = 0L,
+      lastUpdated: Timestamp = new Timestamp(System.currentTimeMillis())
+  ) extends Base${aggregateName}State {
+    def applyEvent(event: Event): Base${aggregateName}State = this
+  }
+}
+"""
+  }
+
+  /**
+   * Write actor files to appropriate locations based on mode
+   */
+  def writeActorFiles(
+      aggregateName: String,
+      rootEntityFieldName: String,
+      actorBaseTrait: String,
+      actorPlaceholder: String,
+      baseState: String
+  ): Unit = {
+    // Always generate actors to core/actors/user/ regardless of aggregate mode
+    // Derive from repositoriesFolder: .../core/repositories/postgres -> .../core/actors/user
+    val actorsFolder = options.repositoriesFolder.replaceAll("/core/repositories/postgres$", s"/core/actors/${rootEntityFieldName}")
+
+    FileUtil.createDirectoriesForFolder(actorsFolder)
+
+    // Always overwrite the base trait (auto-generated)
+    FileUtil.write(s"$actorsFolder/${aggregateName}ActorBase.scala", formatCode(actorBaseTrait))
+
+    // Only create placeholder if doesn't exist (user-editable)
+    writeIfDoesNotExist(s"$actorsFolder/${aggregateName}Actor.scala", formatCode(actorPlaceholder))
+
+    // Write minimal base state (standalone mode only)
+    if (isStandaloneMode && baseState.nonEmpty) {
+      FileUtil.write(s"$actorsFolder/Base${aggregateName}State.scala", formatCode(baseState))
+    }
+  }
+
+  /**
+   * Write file only if it doesn't exist, and add checksum for tracking modifications.
+   * This allows rmGenerated to detect and delete unmodified user-editable files.
+   */
+  private def writeIfDoesNotExist(path: String, content: String): Unit = {
+    val file = new java.io.File(path)
+    if (!file.exists()) {
+      // Add checksum to track if user modifies this file
+      val contentWithChecksum = ChecksumUtil.addChecksum(content)
+      FileUtil.write(path, contentWithChecksum)
+    }
+  }
+
+  private def formatCode(code: String): String = {
+    Formatter.format(code)
+  }
+}

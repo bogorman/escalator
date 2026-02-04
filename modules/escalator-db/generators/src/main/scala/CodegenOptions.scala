@@ -52,6 +52,6 @@ case class CodegenOptions(
     aggregatesFolder: String = "", // e.g. "modules/core/src/main/scala/aggregates"
     aggregateRootTables: List[String] = List.empty, // e.g. List("users", "orders", "products")
     maxAggregateDepth: Int = 3,
-    generatePekkoActors: Boolean = false,
+    generatePekkoActors: Boolean = false, // When true with generateAggregates=false, generates standalone actors
     aggregateBoundaryHints: Map[String, Boolean] = Map.empty
 )

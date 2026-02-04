@@ -13,3 +13,5 @@ project/target/
 
 
 modules/escalator/**
+**/.metals/**
+**/.scala-build/**

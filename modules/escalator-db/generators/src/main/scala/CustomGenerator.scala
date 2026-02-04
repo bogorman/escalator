@@ -13,6 +13,8 @@ trait CustomGenerator {
 
 	def useDefaultValue(tableName: String,columnName: String): Boolean
 
+	def scopeForTable(tableName: String): Option[String]
+
 	// Event generation customization
 	def shouldGenerateEvents(tableName: String): Boolean = true
 

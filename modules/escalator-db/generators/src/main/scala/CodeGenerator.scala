@@ -41,6 +41,8 @@ case class ForeignKey(from: SimpleColumn, to: SimpleColumn)
 case class ReferenceNode(
   table: String,
   foreignKeyColumn: String,
+  referencedTable: Option[String] = None,  // The table this foreign key references
+  referencedColumn: Option[String] = None, // The column in the referenced table
   children: List[ReferenceNode] = List.empty,
   isWeakReference: Boolean = false,  // Reference to another aggregate
   depth: Int = 0
@@ -442,8 +444,17 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val formattedTraitSource = formatCode(traitSource)
       val formattedDaoSource = formatCode(daoSource)
 
-      writeIfDoesNotExist(databaseFolder + s"/tables/${tableClassName}.scala" , formattedTraitSource)
-      writeIfDoesNotExist(postgresFolder + s"/tables/Postgres${tableClassName}.scala" , formattedDaoSource)
+      val databaseFolderTables = folderForTable(databaseFolder + s"/tables",table.name)
+      val postgresFolderTables = folderForTable(postgresFolder + s"/tables",table.name)
+
+      val databaseTableScalaFile = databaseFolderTables + s"/${tableClassName}.scala"
+      val postgresTableScalaFile = postgresFolderTables + s"/Postgres${tableClassName}.scala"
+
+      FileUtil.createDirectoriesForFile(databaseTableScalaFile)
+      FileUtil.createDirectoriesForFile(postgresTableScalaFile)
+
+      writeIfDoesNotExist(databaseTableScalaFile, formattedTraitSource)
+      writeIfDoesNotExist(postgresTableScalaFile, formattedDaoSource)
     }
   }
 
@@ -475,7 +486,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       val repositorySource = GeneratorTemplates.appRepositoryTemplate(packageName, caseClassName, tableClass, tableClassName, options.repositoriesFolder)
       val formattedRepositorySource = formatCode(repositorySource)
 
-      writeIfDoesNotExist(targetFolder + s"/${tableClass}Repository.scala" , formattedRepositorySource)
+      val repoFile = folderForTable(targetFolder,table.name) + s"/${tableClass}Repository.scala"
+
+      FileUtil.createDirectoriesForFile(repoFile)
+      writeIfDoesNotExist(repoFile, formattedRepositorySource)
     }
   }
 
@@ -498,22 +512,41 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         val eventSource = GeneratorTemplates.modelEventTemplate(packageName, caseClassName, table)
         val formattedEventSource = formatCode(eventSource)
 
-        writeIfDoesNotExist(modelsBaseFolder + s"/events/${caseClassName}Event.scala", formattedEventSource)
+        val eventsFolder = folderForTable(modelsBaseFolder + s"/events",table.name)
+
+        val scalaFilePath = eventsFolder + s"/${caseClassName}Event.scala"
+
+        FileUtil.createDirectoriesForFile(scalaFilePath)
+        writeIfDoesNotExist(scalaFilePath, formattedEventSource)
       }
     }
   }
 
   def cleanupExistingGeneratedFiles() = {
     // println("cleanupExistingGeneratedFiles")
-    cleanupExistingGeneratedFilesInFolder(modelsBaseFolder)
-    cleanupExistingGeneratedFilesInFolder(modelsBaseFolder+"/events")
-    cleanupExistingGeneratedFilesInFolder(persistenceBaseFolder)
+    cleanupExistingGeneratedFilesInFolder(modelsBaseFolder,recursive = true)
+    // cleanupExistingGeneratedFilesInFolder(modelsBaseFolder+"/events")
+    cleanupExistingGeneratedFilesInFolder(persistenceBaseFolder,recursive = true)
     
     // Clean repositories folder if specified
     if (options.repositoriesFolder.nonEmpty) {
-      cleanupExistingGeneratedFilesInFolder(options.repositoriesFolder)
+      cleanupExistingGeneratedFilesInFolder(options.repositoriesFolder,recursive = true)
     }
-    
+
+    // Clean actors folder (recursively, as it has subfolders per aggregate root)
+    if (options.repositoriesFolder.nonEmpty && options.generatePekkoActors) {
+      val actorsBaseFolder = options.repositoriesFolder.replaceAll("/repositories/postgres$", "/actors")
+      println(s"[DEBUG] Cleaning actors folder: $actorsBaseFolder")
+      cleanupExistingGeneratedFilesInFolder(actorsBaseFolder, recursive = true)
+    }
+
+    // Clean state folder (recursively, as it has subfolders per aggregate root)
+    if (options.repositoriesFolder.nonEmpty && options.generateAggregates) {
+      val stateBaseFolder = options.repositoriesFolder.replaceAll("/repositories/postgres$", "/actors/state")
+      println(s"[DEBUG] Cleaning state folder: $stateBaseFolder")
+      cleanupExistingGeneratedFilesInFolder(stateBaseFolder, recursive = true)
+    }
+
     // Clean aggregates folder if specified
     // println("aggregatesFolder:" + options.aggregatesFolder)
 
@@ -527,9 +560,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     // }
     
     cleanupExistingGeneratedFilesInFolder(databaseFolder)
-    cleanupExistingGeneratedFilesInFolder(databaseFolder+"/tables")
+    cleanupExistingGeneratedFilesInFolder(databaseFolder+"/tables", recursive = true)
+
     cleanupExistingGeneratedFilesInFolder(postgresFolder)
-    cleanupExistingGeneratedFilesInFolder(postgresFolder+"/tables")
+    cleanupExistingGeneratedFilesInFolder(postgresFolder+"/tables", recursive = true)
 
     val persustanceDbTypePath = s"${options.persistenceBaseFolder}/common/src/main/scala/${packageName.replace('.', '/')}/persistence/postgres/"
     cleanupExistingGeneratedFilesInFolder(persustanceDbTypePath)
@@ -555,21 +589,30 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
 
   def cleanupExistingGeneratedFilesInFolder(folder: String, recursive: Boolean = false) = {
     val f = new File(folder)
-    
+
     if (recursive) {
       cleanupExistingGeneratedFilesRecursive(f)
     } else {
       val scalaFiles = FileUtil.getListOfFiles(f, List("scala"))
-      
-      // println("cleanupExistingGeneratedFilesInFolder:" + folder + " " + scalaFiles.size)
+
+      println(s"[DEBUG] cleanupExistingGeneratedFilesInFolder: $folder (${scalaFiles.size} files)")
       scalaFiles.foreach { scalaFile =>
         val scalaFilePath = scalaFile.getPath
         val content = FileUtil.read(scalaFilePath)
+
+        println(s"[DEBUG] Checking file: $scalaFilePath")
+
+        // Always delete files with auto-generated marker (these are always overwritten)
         if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
-          // println("DELETE FILE:" + scalaFilePath)        
+          println(s"[DEBUG] DELETE AUTO-GENERATED FILE: $scalaFilePath")
+          FileUtil.delete(scalaFilePath)
+        }
+        // Check if it's an unmodified user-editable file (has checksum and hasn't been edited)
+        else if (ChecksumUtil.isSafeToDelete(scalaFilePath)) {
+          println(s"[DEBUG] DELETE UNMODIFIED USER FILE: $scalaFilePath")
           FileUtil.delete(scalaFilePath)
         } else {
-          // println("SKIPPING FILE:" + scalaFilePath + ".")
+          println(s"[DEBUG] SKIPPING FILE (modified or no checksum): $scalaFilePath")
         }
       }
     }
@@ -577,20 +620,34 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
   
   def cleanupExistingGeneratedFilesRecursive(folder: File): Unit = {
     if (!folder.exists() || !folder.isDirectory) return
-    
+
     // Process files in current directory
     val scalaFiles = FileUtil.getListOfFiles(folder, List("scala"))
+
+    if (scalaFiles.nonEmpty) {
+      println(s"[DEBUG] cleanupExistingGeneratedFilesRecursive: ${folder.getPath} (${scalaFiles.size} files)")
+    }
+
     scalaFiles.foreach { scalaFile =>
       val scalaFilePath = scalaFile.getPath
       val content = FileUtil.read(scalaFilePath)
+
+      println(s"[DEBUG] Checking file: $scalaFilePath")
+
+      // Always delete files with auto-generated marker (these are always overwritten)
       if (content.contains(GeneratorTemplates.autoGeneratedCommentTracker)){
-        // println("DELETE FILE:" + scalaFilePath)        
+        println(s"[DEBUG] DELETE AUTO-GENERATED FILE: $scalaFilePath")
+        FileUtil.delete(scalaFilePath)
+      }
+      // Check if it's an unmodified user-editable file (has checksum and hasn't been edited)
+      else if (ChecksumUtil.isSafeToDelete(scalaFilePath)) {
+        println(s"[DEBUG] DELETE UNMODIFIED USER FILE: $scalaFilePath")
         FileUtil.delete(scalaFilePath)
       } else {
-        // println("SKIPPING FILE:" + scalaFilePath + ".")
+        println(s"[DEBUG] SKIPPING FILE (modified or no checksum): $scalaFilePath")
       }
     }
-    
+
     // Recursively process subdirectories
     folder.listFiles().foreach { subFile =>
       if (subFile.isDirectory) {
@@ -859,6 +916,17 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     FileUtil.write(filePath, formattedContent) // Always overwrite
   }
 
+  def folderForTable(path: String, tableName: String) = {
+    //
+    val scope = customGen.scopeForTable(tableName)
+    if (scope.isEmpty){
+      path
+    } else {
+      path+"/"+scope.get
+    } 
+    //
+  }  
+
   def internalTypes(): List[String] = {
     generatedAttributeTypes ++ List(
       // "CorrelationId"
@@ -1000,7 +1068,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       sharedModelTypes ++= scc.uniqueKeyCaseClasses.map(extractClassName(_))
       sharedModelTypes ++= scc.columnCaseClasses.map(extractClassName(_))
 
-      val scalaFilePath = modelsBaseFolder+s"/${namingStrategy.table(scc.tableName)}.scala"
+      val scalaFilePath = folderForTable(modelsBaseFolder,scc.tableName)+s"/${namingStrategy.table(scc.tableName)}.scala"
 
       sharedModels += namingStrategy.table(scc.tableName)
 
@@ -1033,7 +1101,9 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       generateModelEvents(tables)
     }
 
-    // println("generateAggregates:" + options.generateAggregates)
+    println("generateAggregates:" + options.generateAggregates)
+    println("options.aggregateRootTables.nonEmpty:" + options.aggregateRootTables.nonEmpty)
+
     if (options.generateAggregates && options.aggregateRootTables.nonEmpty) {
       // println(s"Generating ${options.aggregateRootTables.size} aggregate roots: ${options.aggregateRootTables.mkString(", ")}")
 
@@ -1044,6 +1114,25 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       }
     }
 
+    // Generate Pekko actors independently (can be used with or without aggregates)
+    if (options.generatePekkoActors && options.aggregateRootTables.nonEmpty) {
+      Class.forName(options.jdbcDriver)
+      val db: Connection = DriverManager.getConnection(options.url, options.user, options.password)
+
+      try {
+        val actorGen = new ActorGenerator(namingStrategy, options)
+
+        options.aggregateRootTables.foreach { rootTable =>
+          // Build reference tree for this root table
+          val referenceTree = ReferenceTreeBuilder.buildReferenceTree(db, rootTable, options.maxAggregateDepth, options)
+
+          // Generate actors for this root table
+          actorGen.generateActors(db, rootTable, referenceTree)
+        }
+      } finally {
+        db.close()
+      }
+    }
 
     // val generatedCode = codegen.tables2code(tables, CustomNamingStrategy, codegenOptions)
 

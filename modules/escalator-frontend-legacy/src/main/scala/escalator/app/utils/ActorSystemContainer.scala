@@ -1,7 +1,7 @@
 package escalator.frontend.app.utils
 
 import akka.actor.ActorSystem
-// import akka.actor.ActorMaterializer
+// import org.apache.pekko.actor.ActorMaterializer
 
 import scala.concurrent.ExecutionContext
 

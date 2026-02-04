@@ -2,7 +2,7 @@ package escalator.util
 
 import scala.concurrent.duration._
 
-case class Timestamp(nanos: Long) extends AnyVal {
+case class Timestamp private (nanos: Long) extends AnyVal {
   def isAfter(other: Timestamp): Boolean = this > other
 
   def after(other: Timestamp): Boolean = this > other
@@ -33,4 +33,26 @@ object Timestamp {
   def fromMillis(ms: Long) = {
     Timestamp(ms * 1000000L)
   }
+
+  /**
+   * Create a Timestamp from Unix seconds (common API format like Helius)
+   */
+  def fromSeconds(seconds: Long): Timestamp = {
+    Timestamp(seconds * 1000000000L)
+  }
+
+  /**
+   * Create a Timestamp from milliseconds
+   */
+  // def fromMillis(millis: Long): Timestamp = {
+  //   Timestamp.fromMillis(millis)
+  // }
+
+  /**
+   * Create a Timestamp from the current time
+   */
+  def now(): Timestamp = {
+    fromMillis(System.currentTimeMillis())
+  }
+
 }
