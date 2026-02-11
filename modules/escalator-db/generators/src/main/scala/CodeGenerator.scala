@@ -70,6 +70,12 @@ case class ReferenceTree(rootTable: String, nodes: List[ReferenceNode]) {
   }
 }
 
+object SimpleColumn {
+  // Registry of all table class names, populated during code generation.
+  // Used to detect when a generated value type name would collide with a table class name.
+  val allTableClassNames = scala.collection.mutable.Set.empty[String]
+}
+
 case class SimpleColumn(tableName: String, columnName: String) {
   import TextUtil._
   val namingStrategy = GeneratorNamingStrategy
@@ -91,7 +97,13 @@ case class SimpleColumn(tableName: String, columnName: String) {
       s"${namingStrategy.table(tableName)}${camelify(columnName)}"
     }
     // println("   SimpleColumn t:" + t)
-    t
+
+    // If the generated type name collides with a table class name, add "Value" suffix
+    if (SimpleColumn.allTableClassNames.contains(t)) {
+      s"${t}Value"
+    } else {
+      t
+    }
   }
 }
 
@@ -1032,6 +1044,12 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     generateAttributeTypes(db)
 
     val allTables = getTables(db, foreignKeys)
+
+    // Populate the table class name registry so SimpleColumn.toType can detect collisions
+    SimpleColumn.allTableClassNames.clear()
+    allTables.foreach { table =>
+      SimpleColumn.allTableClassNames += namingStrategy.table(table.name)
+    }
 
     val tables = allTables.filter { _.name != "attributes" }.toList
 
