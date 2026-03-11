@@ -166,7 +166,7 @@ object GeneratorTemplates {
 
 				def upsert(${initial}: ${modelClass}): Future[${modelClass}]
 
-				def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]				
+				def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]]
 
 				def delete(${initial}: ${modelClass}): Future[${modelClass}]
 			"""
@@ -310,26 +310,30 @@ object GeneratorTemplates {
 		} else {
 
 			s"""
-			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = monitored("getById") {
-			    read {
-			      ctx.run(
-			        query[${modelClass}]
-			          .filter(_.id == lift(${initial}))
-			          .take(1)
-			      ).runToFuture.map(_.headOption)
+			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = cached(${initial}.id) {
+			    monitored("getById") {
+			      read {
+			        ctx.run(
+			          query[${modelClass}]
+			            .filter(_.id == lift(${initial}))
+			            .take(1)
+			        ).runToFuture.map(_.headOption)
+			      }
 			    }
 			  }
 
-			  override def getByIds(${initial}: List[${primaryKeyClass.get}]): Future[List[${modelClass}]] =monitored("getByIds") {
+			  override def getByIds(${initial}: List[${primaryKeyClass.get}]): Future[List[${modelClass}]] = cachedList(${initial}.map(_.id)) { missingIds =>
+			    monitored("getByIds") {
 			      read {
 			        ctx
 			          .run(
 			            query[${modelClass}]
-			              .filter(obj => liftQuery(${initial}).contains(obj.id))
+			              .filter(obj => liftQuery(missingIds.map(${primaryKeyClass.get}(_))).contains(obj.id))
 			          )
 			          .runToFuture
 			      }
 			    }
+			  }
 
 			  override def update(${initial}: ${modelClass}): Future[${modelClass}] = monitored("update") {
 			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
@@ -337,7 +341,7 @@ object GeneratorTemplates {
 			  	} else {
 			  		val ts = TimeUtil.nowTimestamp()
 			  		val updatedModel = ${initial}${updateTimeTracking}
-			  		
+
 			  		write(updatedModel) {
 			  			ctx.run(
 			  				query[${modelClass}]
@@ -354,15 +358,15 @@ object GeneratorTemplates {
 			  	} else {
 			  		update(${initial})
 			  	}
-			  }		  
+			  }
 
 			  override def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = {
 			  	Future.sequence(  ${initial}l.map { ${initial} => upsert(${initial}) }  )
-			  }	
+			  }
 
 			  override def delete(${initial}: ${modelClass}): Future[${modelClass}] = monitored("delete") {
 			    val ts = TimeUtil.nowTimestamp()
-			    
+
 			    write(${initial}) {
 			      ctx.run(
 			        query[${modelClass}]
@@ -431,19 +435,22 @@ object GeneratorTemplates {
 
 		import ${packageSpace}.persistence.database.tables.${tableClass}
 
+		import ${packageSpace}.cache.{CachedOperations, TableCacheProvider, TableCache}
+
 		import monix.eval.Task
 		import escalator.util.monix.TaskSyntax._
 
 		abstract class Postgres${tableClass}(database: PostgresDatabase)
-		  (implicit logger: Logger, 
+		  (implicit logger: Logger,
 		    monitoring: Monitoring,
 		    eventBus: EventBus)
 		    extends ${tableClass}
 		    with PostgresCustomEncoder
 		    with RepositoryHelpers
+		    with CachedOperations[${modelClass}]
 		    {
 
-		  def db:PostgresDatabase = database 
+		  def db:PostgresDatabase = database
 
 		  import PostgresMappedEncoder._
 
@@ -454,6 +461,9 @@ object GeneratorTemplates {
 
 		  def monitored(name: String) = MonitoredPostgresOperation(name, tableName)
 
+		  // Cache resolved from global TableCacheProvider — None if no cache wired
+		  protected lazy val tableCacheOpt: Option[TableCache[${modelClass}]] =
+		    TableCacheProvider.instance.forTable[${modelClass}](tableName)
 
 		  private def insert(${initial}: ${modelClass}): Future[${modelClass}] = monitored("insert") {
 		  	val ts = TimeUtil.nowTimestamp()

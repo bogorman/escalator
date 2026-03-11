@@ -584,15 +584,17 @@ object CodeBuilder {
 
 		// def getBy${keyNames}(${keyArgs}): Future[_]
 		s"""
-			override def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]] = monitored("get-by-${byMonitorKey}") {
-		    read {
-		   	  ctx.run(
-		   	    query[${modelClass}]
-					  .filter( ${initial} =>
-						  ${filterArgs}
-					  )
-                    .take(1)
-            	  ).runToFuture.map(_.headOption)
+			override def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]] = cachingResult {
+		    monitored("get-by-${byMonitorKey}") {
+		      read {
+		   	    ctx.run(
+		   	      query[${modelClass}]
+					    .filter( ${initial} =>
+						    ${filterArgs}
+					    )
+                      .take(1)
+            	    ).runToFuture.map(_.headOption)
+		      }
 		    }
 		  	}
 		"""
@@ -816,22 +818,26 @@ object CodeBuilder {
 				
 				// For getBy methods, we don't wrap nullable columns in Option - the method handles nulls internally
 				val singleMethod = s"""
-  override def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]] = monitored("get-by-${monitorKey}") {
-    read {
-      ctx.run(
-        query[${modelClass}]
-          .filter(r => ${singleFilterCondition})
-      ).runToFuture
+  override def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]] = cachingResults {
+    monitored("get-by-${monitorKey}") {
+      read {
+        ctx.run(
+          query[${modelClass}]
+            .filter(r => ${singleFilterCondition})
+        ).runToFuture
+      }
     }
   }"""
-				
+
 				val bulkMethod = s"""
-  override def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]] = monitored("get-by-${monitorKey}s") {
-    read {
-      ctx.run(
-        query[${modelClass}]
-          .filter(r => ${bulkFilterCondition})
-      ).runToFuture
+  override def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]] = cachingResults {
+    monitored("get-by-${monitorKey}s") {
+      read {
+        ctx.run(
+          query[${modelClass}]
+            .filter(r => ${bulkFilterCondition})
+        ).runToFuture
+      }
     }
   }"""
 				singleMethod + "\n" + bulkMethod
