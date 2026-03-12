@@ -517,8 +517,7 @@ object GeneratorTemplates {
 		    extends ${tableClass}
 		    with PostgresCustomEncoder
 		    with RepositoryHelpers
-		    ${if (generateCaches) s"with CachedOperations[${modelClass}]" else ""}
-		    {
+		    ${if (generateCaches) s"with CachedOperations[${modelClass}]" else ""} {
 
 		  def db:PostgresDatabase = database
 
