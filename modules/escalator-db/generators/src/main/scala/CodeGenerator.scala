@@ -451,7 +451,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       // println("tableClassName:" + tableClassName)
 
       val traitSource = GeneratorTemplates.tableTraitTemplate(table, packageName, caseClassName, tableClass, tableClassName)
-      val daoSource = GeneratorTemplates.tableDaoTemplate(customGen, table, packageName, caseClassName, tableClass, tableClassName)
+      val daoSource = GeneratorTemplates.tableDaoTemplate(customGen, table, packageName, caseClassName, tableClass, tableClassName, options.generateCaches)
 
       val formattedTraitSource = formatCode(traitSource)
       val formattedDaoSource = formatCode(daoSource)

@@ -213,7 +213,7 @@ object GeneratorTemplates {
 		"""
 	}
 
-	def tableDaoTemplate(customGen: CustomGenerator, table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
+	def tableDaoTemplate(customGen: CustomGenerator, table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String, generateCaches: Boolean = false) = {
 		// val package = ""
 		val initial = modelClass.take(1).toLowerCase
 		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"
@@ -249,12 +249,12 @@ object GeneratorTemplates {
 		}
 
 		val gettersByUniqueKeys = if (canAddUpdateById(table)) {
-			CodeBuilder.buildGettersByUniqueKeysCode(table, packageSpace, modelClass, tableName, tableClass)
+			CodeBuilder.buildGettersByUniqueKeysCode(table, packageSpace, modelClass, tableName, tableClass, generateCaches)
 		} else {
 			""
 		}
-		
-		val gettersByForeignKeys = CodeBuilder.buildGettersByForeignKeysCode(table, packageSpace, modelClass, tableName, tableClass)
+
+		val gettersByForeignKeys = CodeBuilder.buildGettersByForeignKeysCode(table, packageSpace, modelClass, tableName, tableClass, generateCaches)
 
     // val store = CodeBuilder.buildStoreCode(table, packageSpace, modelClass, tableName, tableClass)	
     
@@ -307,7 +307,7 @@ object GeneratorTemplates {
 
 		val primaryIdFuncs = if (primaryKeyClass.isEmpty){
 			""
-		} else {
+		} else if (generateCaches) {
 
 			s"""
 			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = cached(${initial}.id) {
@@ -329,6 +329,76 @@ object GeneratorTemplates {
 			          .run(
 			            query[${modelClass}]
 			              .filter(obj => liftQuery(missingIds.map(${primaryKeyClass.get}(_))).contains(obj.id))
+			          )
+			          .runToFuture
+			      }
+			    }
+			  }
+
+			  override def update(${initial}: ${modelClass}): Future[${modelClass}] = monitored("update") {
+			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
+			  		insert(${initial})
+			  	} else {
+			  		val ts = TimeUtil.nowTimestamp()
+			  		val updatedModel = ${initial}${updateTimeTracking}
+
+			  		write(updatedModel) {
+			  			ctx.run(
+			  				query[${modelClass}]
+			  					.filter(_.id == lift(${initial}.id))
+			  					.update(lift(updatedModel))
+			  			).runToFuture
+			  		}.publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+			  	}
+			  }
+
+			  override def upsert(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert") {
+			  	if (${initial}.id == ${primaryKeyClass.get}(${defaultPrimaryValue})) {
+			  		insert(${initial})
+			  	} else {
+			  		update(${initial})
+			  	}
+			  }
+
+			  override def upsert(${initial}l: List[${modelClass}]): Future[List[${modelClass}]] = {
+			  	Future.sequence(  ${initial}l.map { ${initial} => upsert(${initial}) }  )
+			  }
+
+			  override def delete(${initial}: ${modelClass}): Future[${modelClass}] = monitored("delete") {
+			    val ts = TimeUtil.nowTimestamp()
+
+			    write(${initial}) {
+			      ctx.run(
+			        query[${modelClass}]
+			          .filter(_.id == lift(${initial}.id))
+			          .delete
+			      ).runToFuture
+			    }.publishingDeleted((m, cid, time) => events.${modelClass}Deleted(m, ${pkFieldForDeleted} cid, time))
+			  }
+
+			"""
+		} else {
+
+			s"""
+			  override def getById(${initial}: ${primaryKeyClass.get}): Future[Option[${modelClass}]] = {
+			    monitored("getById") {
+			      read {
+			        ctx.run(
+			          query[${modelClass}]
+			            .filter(_.id == lift(${initial}))
+			            .take(1)
+			        ).runToFuture.map(_.headOption)
+			      }
+			    }
+			  }
+
+			  override def getByIds(${initial}: List[${primaryKeyClass.get}]): Future[List[${modelClass}]] = {
+			    monitored("getByIds") {
+			      read {
+			        ctx
+			          .run(
+			            query[${modelClass}]
+			              .filter(obj => liftQuery(${initial}.map(_.id).map(${primaryKeyClass.get}(_))).contains(obj.id))
 			          )
 			          .runToFuture
 			      }
@@ -435,7 +505,7 @@ object GeneratorTemplates {
 
 		import ${packageSpace}.persistence.database.tables.${tableClass}
 
-		import ${packageSpace}.cache.{CachedOperations, TableCacheProvider, TableCache}
+		${if (generateCaches) s"import escalator.util.cache.{CachedOperations, TableCacheProvider, TableCache}" else ""}
 
 		import monix.eval.Task
 		import escalator.util.monix.TaskSyntax._
@@ -447,7 +517,7 @@ object GeneratorTemplates {
 		    extends ${tableClass}
 		    with PostgresCustomEncoder
 		    with RepositoryHelpers
-		    with CachedOperations[${modelClass}]
+		    ${if (generateCaches) s"with CachedOperations[${modelClass}]" else ""}
 		    {
 
 		  def db:PostgresDatabase = database
@@ -461,9 +531,9 @@ object GeneratorTemplates {
 
 		  def monitored(name: String) = MonitoredPostgresOperation(name, tableName)
 
-		  // Cache resolved from global TableCacheProvider — None if no cache wired
+		  ${if (generateCaches) s"""// Cache resolved from global TableCacheProvider — None if no cache wired
 		  protected lazy val tableCacheOpt: Option[TableCache[${modelClass}]] =
-		    TableCacheProvider.instance.forTable[${modelClass}](tableName)
+		    TableCacheProvider.instance.forTable[${modelClass}](tableName)""" else ""}
 
 		  private def insert(${initial}: ${modelClass}): Future[${modelClass}] = monitored("insert") {
 		  	val ts = TimeUtil.nowTimestamp()

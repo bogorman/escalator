@@ -53,5 +53,7 @@ case class CodegenOptions(
     aggregateRootTables: List[String] = List.empty, // e.g. List("users", "orders", "products")
     maxAggregateDepth: Int = 3,
     generatePekkoActors: Boolean = false, // When true with generateAggregates=false, generates standalone actors
-    aggregateBoundaryHints: Map[String, Boolean] = Map.empty
+    aggregateBoundaryHints: Map[String, Boolean] = Map.empty,
+    // Cache generation options
+    generateCaches: Boolean = false // When true, generates CachedOperations mixin and cache wrappers on table DAOs
 )

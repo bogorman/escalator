@@ -545,7 +545,7 @@ object CodeBuilder {
 		"""			
 	}
 
-	def buildGetterCodeByUniqueKey(table: Table, key: UniqueKey, modelClass: String) = {
+	def buildGetterCodeByUniqueKey(table: Table, key: UniqueKey, modelClass: String, generateCaches: Boolean = false) = {
 		val namingStrategy = GeneratorNamingStrategy
 
 		val initial = modelClass.take(1).toLowerCase
@@ -584,7 +584,7 @@ object CodeBuilder {
 
 		// def getBy${keyNames}(${keyArgs}): Future[_]
 		s"""
-			override def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]] = cachingResult {
+			override def getBy${keyNames}(${keyArgs}): Future[Option[${modelClass}]] = ${if (generateCaches) "cachingResult {" else "{"}
 		    monitored("get-by-${byMonitorKey}") {
 		      read {
 		   	    ctx.run(
@@ -737,7 +737,7 @@ object CodeBuilder {
 		// ""
 	}
 
-	def buildGettersByUniqueKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+	def buildGettersByUniqueKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String, generateCaches: Boolean = false): String = {
 		val includeGettersByKey = table.hasUniqueKeysExcludingPrimaryKey()
 
 		val getters = if (includeGettersByKey) {
@@ -745,7 +745,7 @@ object CodeBuilder {
 			val nonKeyColumns = table.nonKeyColumns
 
 			uKeys.map { uk =>
-				buildGetterCodeByUniqueKey(table, uk, modelClass)
+				buildGetterCodeByUniqueKey(table, uk, modelClass, generateCaches)
 			}.mkString("\n")
 		} else {
 			""
@@ -753,7 +753,7 @@ object CodeBuilder {
 		getters
 	}
 
-	def buildGettersByForeignKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+	def buildGettersByForeignKeysCode(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String, generateCaches: Boolean = false): String = {
 		val namingStrategy = GeneratorNamingStrategy
 		
 		// Find columns that are foreign keys (reference other tables)
@@ -818,7 +818,7 @@ object CodeBuilder {
 				
 				// For getBy methods, we don't wrap nullable columns in Option - the method handles nulls internally
 				val singleMethod = s"""
-  override def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]] = cachingResults {
+  override def ${methodName}(${paramName}: ${foreignKeyType}): Future[List[${modelClass}]] = ${if (generateCaches) "cachingResults {" else "{"}
     monitored("get-by-${monitorKey}") {
       read {
         ctx.run(
@@ -830,7 +830,7 @@ object CodeBuilder {
   }"""
 
 				val bulkMethod = s"""
-  override def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]] = cachingResults {
+  override def ${bulkMethodName}(${paramName}s: List[${foreignKeyType}]): Future[List[${modelClass}]] = ${if (generateCaches) "cachingResults {" else "{"}
     monitored("get-by-${monitorKey}s") {
       read {
         ctx.run(
