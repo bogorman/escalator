@@ -166,11 +166,19 @@ class AggregateGenerator(
     val aggregateName = namingStrategy.table(rootTableName)
     val rootEntityFieldName = singularize(rootTableName.toLowerCase)
     
-    // Direct children (store as List[EntityId])
+    // Direct children (store as List[EntityId] or List[Entity] for full-object tables)
     val directRefs = tree.nodes.filter(node => node.depth == 0)
     val directIdFields = directRefs.map { ref =>
-      val fieldName = generateFieldName(ref, directRefs)
-      s"  $fieldName: List[${namingStrategy.table(singularize(ref.table))}Id] = List.empty"
+      val isFullObject = options.storeFullObjectTables.contains(ref.table)
+      val typeName = namingStrategy.table(singularize(ref.table))
+      val fieldName = if (isFullObject) {
+        // Strip "Ids" suffix and use plural form: e.g. sourceEntityMessageActions
+        generateFieldName(ref, directRefs).stripSuffix("Ids") + "s"
+      } else {
+        generateFieldName(ref, directRefs)
+      }
+      val fieldType = if (isFullObject) typeName else s"${typeName}Id"
+      s"  $fieldName: List[$fieldType] = List.empty"
     }
     
     // Nested Maps for children of children (e.g., postComments: Map[PostId, List[CommentId]])
@@ -320,13 +328,17 @@ $entityIdExtractor
     val childNameLower = nodes.head.table.toLowerCase
     val directRefs = tree.nodes.filter(n => n.depth == 0 && !n.isWeakReference)
 
+    val isFullObject = options.storeFullObjectTables.contains(nodes.head.table)
+
     // Generate case branches for each FK — Created
     val createBranches = nodes.map { node =>
       val fkCheck = generateForeignKeyCheck(node, rootTableName)
-      val fieldName = generateFieldName(node, directRefs)
+      val rawFieldName = generateFieldName(node, directRefs)
+      val fieldName = if (isFullObject) rawFieldName.stripSuffix("Ids") + "s" else rawFieldName
+      val appendExpr = if (isFullObject) s"${childNameLower}" else s"${childNameLower}.id"
       s"""      case events.${childName}Created(${childNameLower}, _, correlationId, timestamp) if $fkCheck =>
         state.copy(
-          $fieldName = state.$fieldName :+ ${childNameLower}.id,
+          $fieldName = state.$fieldName :+ ${appendExpr},
           version = state.version + 1,
           lastUpdated = timestamp
         )"""
@@ -335,21 +347,34 @@ $entityIdExtractor
     // Generate case branches for each FK — Updated
     val updateBranches = nodes.map { node =>
       val fkCheck = generateForeignKeyCheck(node, rootTableName)
-      s"""      case events.${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $fkCheck =>
+      if (isFullObject) {
+        val rawFieldName = generateFieldName(node, directRefs)
+        val fieldName = rawFieldName.stripSuffix("Ids") + "s"
+        s"""      case events.${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $fkCheck =>
+        state.copy(
+          $fieldName = state.$fieldName.map(x => if (x.id == ${childNameLower}.id) ${childNameLower} else x),
+          version = state.version + 1,
+          lastUpdated = timestamp
+        )"""
+      } else {
+        s"""      case events.${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $fkCheck =>
         state.copy(
           version = state.version + 1,
           lastUpdated = timestamp
         )"""
+      }
     }.mkString("\n\n")
 
     // Generate case branches for each FK — Deleted
     val deleteBranches = nodes.map { node =>
       val fkCheck = generateForeignKeyCheck(node, rootTableName)
-      val fieldName = generateFieldName(node, directRefs)
+      val rawFieldName = generateFieldName(node, directRefs)
+      val fieldName = if (isFullObject) rawFieldName.stripSuffix("Ids") + "s" else rawFieldName
+      val filterExpr = if (isFullObject) s"_.id == ${childNameLower}.id" else s"_ == ${childNameLower}.id"
       val nestedUpdates = generateNestedUpdates(node, tree)
       s"""      case events.${childName}Deleted(${childNameLower}, _, correlationId, timestamp) if $fkCheck =>
         state.copy(
-          $fieldName = state.$fieldName.filterNot(_ == ${childNameLower}.id),${nestedUpdates}
+          $fieldName = state.$fieldName.filterNot($filterExpr),${nestedUpdates}
           version = state.version + 1,
           lastUpdated = timestamp
         )"""
@@ -404,8 +429,12 @@ $accessorList
         case Some(id: ${aggregateName}Id) => id
       }).distinct.toList"""
       } else {
-        // Single FK — safe direct access
-        s"""    case e: events.${childName}Event => List(${accessors.head})"""
+        // Single FK — use Seq/collect to safely handle both EntityId and Option[EntityId]
+        s"""    case e: events.${childName}Event =>
+      Seq[Any](${accessors.head}).collect {
+        case id: ${aggregateName}Id => id
+        case Some(id: ${aggregateName}Id) => id
+      }.toList"""
       }
     }
 
@@ -458,11 +487,21 @@ $allCases
     val foreignKeyCheck = generateForeignKeyCheck(node, rootTableName)
     val nestedUpdates = generateNestedUpdates(node, tree)
     val depthDescription = if (node.depth == 0) "direct children" else s"depth ${node.depth}"
-    
+    val isFullObject = options.storeFullObjectTables.contains(node.table)
+
     // Use consistent field naming for direct children
     val directRefs = tree.nodes.filter(n => n.depth == 0 && !n.isWeakReference)
-    val fieldName = generateFieldName(node, directRefs)
-    
+    val rawFieldName = generateFieldName(node, directRefs)
+    val fieldName = if (isFullObject) rawFieldName.stripSuffix("Ids") + "s" else rawFieldName
+    val appendExpr = if (isFullObject) childNameLower else s"${childNameLower}.id"
+    val filterExpr = if (isFullObject) s"_.id == ${childNameLower}.id" else s"_ == ${childNameLower}.id"
+
+    val updateBody = if (isFullObject) {
+      s"""          $fieldName = state.$fieldName.map(x => if (x.id == ${childNameLower}.id) ${childNameLower} else x),"""
+    } else {
+      ""
+    }
+
     s"""  /**
    * Handle events for ${childName} entities ($depthDescription)
    */
@@ -470,25 +509,24 @@ $allCases
     event match {
       case events.${childName}Created(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
         state.copy(
-          $fieldName = state.$fieldName :+ ${childNameLower}.id,
+          $fieldName = state.$fieldName :+ ${appendExpr},
           version = state.version + 1,
           lastUpdated = timestamp
         )
-        
+
       case events.${childName}Updated(${childNameLower}, previous${childName}, _, correlationId, timestamp) if $foreignKeyCheck =>
-        // No ID changes needed for updates
         state.copy(
-          version = state.version + 1,
+$updateBody          version = state.version + 1,
           lastUpdated = timestamp
         )
-        
+
       case events.${childName}Deleted(${childNameLower}, _, correlationId, timestamp) if $foreignKeyCheck =>
         state.copy(
-          $fieldName = state.$fieldName.filterNot(_ == ${childNameLower}.id),$nestedUpdates
+          $fieldName = state.$fieldName.filterNot($filterExpr),$nestedUpdates
           version = state.version + 1,
           lastUpdated = timestamp
         )
-        
+
       case _ => state  // Event not relevant to this aggregate
     }
   }"""
@@ -549,7 +587,7 @@ $allCases
     // Generate loading logic for each level
     // val loadingLogic = generateStateLoadingLogic(rootTableName, tree, aggregateName)
     val loadingLogic = s"""
-          Task.pure(Some(Base${aggregateName}State.empty(userId)))
+          Task.pure(Some(Base${aggregateName}State()))
     """
 
     s"""package ${options.packageName}.core.actors.state.${rootEntityFieldName}
@@ -941,7 +979,7 @@ ${GeneratorTemplates.autoGeneratedComment}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Success, Failure}
-import org.apache.pekko.actor.{Actor, ActorLogging, ActorRef}
+import org.apache.pekko.actor.{Actor, ActorRef}
 import monix.execution.Scheduler
 import escalator.ddd.Event
 import escalator.util.logging.Logger
@@ -957,7 +995,7 @@ import ${options.packageName}.cache.distributed.DistributedCacheManager
  * This trait is regenerated on every 'sbt dbGenerate'
  * Custom logic goes in ${aggregateName}Actor class
  */
-trait ${aggregateName}ActorBase extends Actor with ActorLogging {
+trait ${aggregateName}ActorBase extends Actor with escalator.util.logging.DynamicActorLogging {
 
   // Abstract members - provided by concrete class
   def ${rootEntityFieldName}Id: ${aggregateName}Id
@@ -987,7 +1025,7 @@ trait ${aggregateName}ActorBase extends Actor with ActorLogging {
   /**
    * Default message handling - can be used by concrete class
    */
-  def baseReceive: Receive = {
+  def baseReceive: Receive = logReceive.orElse {
     case ${aggregateName}Actor.${aggregateName}EventMessage(event) =>
       handleEvent(event)
 
