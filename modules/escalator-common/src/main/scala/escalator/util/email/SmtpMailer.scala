@@ -21,11 +21,14 @@ class SmtpMailer extends EscalatorMailer {
 
     val from = username
 
+    val smtpHost = Option(System.getenv("SMTP_HOST")).getOrElse("smtp.gmail.com")
+    val smtpPort = Option(System.getenv("SMTP_PORT")).getOrElse("587")
+
  		val props = new Properties()
     props.put("mail.smtp.auth", "true")
     props.put("mail.smtp.starttls.enable", "true")
-    props.put("mail.smtp.host", "smtp.gmail.com")
-    props.put("mail.smtp.port", "587")
+    props.put("mail.smtp.host", smtpHost)
+    props.put("mail.smtp.port", smtpPort)
 
 		val session = Session.getInstance(props, new Authenticator() {
       override protected def getPasswordAuthentication: PasswordAuthentication = {
