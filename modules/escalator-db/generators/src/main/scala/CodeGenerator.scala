@@ -1345,6 +1345,18 @@ object CodeGenerator {
   //   codegen.generateAggregateRoot(rootTableName, "id", maxDepth)
   // }
   
+  def prune(codegenOptions: CodegenOptions, customGen: CustomGenerator): Unit = {
+    customGen.setup()
+    val pruner = new DbPruner(codegenOptions, customGen)
+    pruner.run()
+  }
+
+  def unprune(codegenOptions: CodegenOptions, customGen: CustomGenerator): Unit = {
+    customGen.setup()
+    val pruner = new DbPruner(codegenOptions, customGen)
+    pruner.unprune()
+  }
+
   /**
    * Generate all configured aggregate roots
    */

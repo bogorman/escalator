@@ -213,44 +213,26 @@ object CodeBuilder {
 		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert-on-${monitorKey}") {
 		    val ts = TimeUtil.nowTimestamp()
 		    val toUpsert = ${insertUpdateTimeTracking}
-		    
-			ctx.transaction {
-			 for {
-			  // Step 1: perform upsert, return only the generated ID
-			  id <- ctx.run(
-			  	query[${modelClass}]
-			        .insert(lift(toUpsert))
-			        .onConflictUpdate(${conflictArgs})(
-			          ${updateArgs}
-			        )
-			        .returningGenerated(_.id)
-		    	)
 
- 				tuples: List[(Timestamp, Timestamp)] <- ctx.run(
-		          query[${modelClass}]
-		            .filter(_.id == lift(id))
-		            .map(r => (r.createdAt, r.updatedAt))
+		    ctx.run(
+		      query[${modelClass}]
+		        .insert(lift(toUpsert))
+		        .onConflictUpdate(${conflictArgs})(
+		          ${updateArgs}
 		        )
+		        .returning(r => (r.id, r.createdAt))
+		    ).runToFuture
+		    .flatMap { case (id, createdAt) =>
+		      val wasInserted = createdAt == ts
+		      val result = toUpsert.copy(id = id, createdAt = createdAt)
 
-				 _ <- if (tuples.isEmpty) { Task.raiseError(new NoSuchElementException("No row returned after upsert")) }  else Task.unit
-
-		        createdAt = tuples.head._1
-		        updatedAt = tuples.head._2
-		        wasInserted = createdAt == updatedAt
-
-				result = toUpsert.copy(id = id, createdAt = createdAt, updatedAt = updatedAt)
-
-				_ <- Task.deferFuture {
-		               if (wasInserted)
-		                 writeWithTimestamp(result, ts)(Future.successful(()))
-		                   .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
-		               else
-		                 writeWithTimestamp(result, ts)(Future.successful(()))
-		                   .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
-		             }
-			      } yield result				
-		      
-		    }.runToFuture
+		      if (wasInserted)
+		        writeWithTimestamp(result, ts)(Future.successful(()))
+		          .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		      else
+		        writeWithTimestamp(result, ts)(Future.successful(()))
+		          .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		    }
 		}
 		"""
 
