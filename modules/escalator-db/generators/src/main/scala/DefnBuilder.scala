@@ -41,8 +41,11 @@ object DefnBuilder {
 
 		val functionName = key.cols.map( c => namingStrategy.table(c.columnName) ).mkString("")
 
+		// Both the safe 2-query upsert and the single-query Fast variant.
+		// See CodeBuilder.buildUpsertOnCode for implementation details + trade-offs.
 		s"""
 		  def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}]
+		  def upsertOn${functionName}Fast(${initial}: ${modelClass}): Future[${modelClass}]
 		"""
 	}
 

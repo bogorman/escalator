@@ -209,8 +209,64 @@ object CodeBuilder {
 		// """
 
 
-		s"""
+		// SAFE 2-query pattern: correct id generation (sequence) + accurate createdAt/updatedAt.
+		// Step 1: INSERT with .returningGenerated(_.id) — id is EXCLUDED from the INSERT column
+		//         list so BIGSERIAL fires. Without this, id=0 is written in and we hit PK conflicts
+		//         on every second row.
+		// Step 2: SELECT the row's createdAt/updatedAt to determine whether this was an insert
+		//         (createdAt == updatedAt) or an update-on-conflict (createdAt < updatedAt).
+		// Wrapped in a transaction so both queries see the same row.
+		val twoQueryUpsert = s"""
 		  override def upsertOn${functionName}(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert-on-${monitorKey}") {
+		    val ts = TimeUtil.nowTimestamp()
+		    val toUpsert = ${insertUpdateTimeTracking}
+
+		    ctx.transaction {
+		      for {
+		        id <- ctx.run(
+		          query[${modelClass}]
+		            .insert(lift(toUpsert))
+		            .onConflictUpdate(${conflictArgs})(
+		              ${updateArgs}
+		            )
+		            .returningGenerated(_.id)
+		        )
+
+		        tuples: List[(Timestamp, Timestamp)] <- ctx.run(
+		          query[${modelClass}]
+		            .filter(_.id == lift(id))
+		            .map(r => (r.createdAt, r.updatedAt))
+		        )
+
+		        _ <- if (tuples.isEmpty) Task.raiseError(new NoSuchElementException("No row returned after upsert")) else Task.unit
+
+		        createdAt = tuples.head._1
+		        updatedAt = tuples.head._2
+		        wasInserted = createdAt == updatedAt
+
+		        result = toUpsert.copy(id = id, createdAt = createdAt, updatedAt = updatedAt)
+
+		        _ <- Task.deferFuture {
+		               if (wasInserted)
+		                 writeWithTimestamp(result, ts)(Future.successful(()))
+		                   .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
+		               else
+		                 writeWithTimestamp(result, ts)(Future.successful(()))
+		                   .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
+		             }
+		      } yield result
+		    }.runToFuture
+		  }
+		"""
+
+		// FAST single-query variant: uses returningGenerated(id) + PostgreSQL xmax system column
+		// to detect insert vs update in one round trip. Trade-off: result.createdAt is set to `ts`
+		// (what we wrote) rather than the true value on the update path — consumers that care
+		// about createdAt on updates must use the non-Fast variant or re-read.
+		// Use this for bulk/hot-path writes (e.g. candle updates) where the distinction between
+		// createdAt-as-written and createdAt-as-stored is irrelevant.
+		val fastUpsert = s"""
+		  override def upsertOn${functionName}Fast(${initial}: ${modelClass}): Future[${modelClass}] = monitored("upsert-on-${monitorKey}-fast") {
 		    val ts = TimeUtil.nowTimestamp()
 		    val toUpsert = ${insertUpdateTimeTracking}
 
@@ -220,12 +276,9 @@ object CodeBuilder {
 		        .onConflictUpdate(${conflictArgs})(
 		          ${updateArgs}
 		        )
-		        .returning(r => (r.id, r.createdAt))
-		    ).runToFuture
-		    .flatMap { case (id, createdAt) =>
-		      val wasInserted = createdAt == ts
-		      val result = toUpsert.copy(id = id, createdAt = createdAt)
-
+		        .returningGenerated(r => (r.id, infix"xmax = 0".as[Boolean]))
+		    ).runToFuture.flatMap { case (id, wasInserted) =>
+		      val result = toUpsert.copy(id = id)
 		      if (wasInserted)
 		        writeWithTimestamp(result, ts)(Future.successful(()))
 		          .publishingCreated((cur, cid, time) => events.${modelClass}Created(cur, ${pkFieldForCreated} cid, time))
@@ -233,11 +286,10 @@ object CodeBuilder {
 		        writeWithTimestamp(result, ts)(Future.successful(()))
 		          .publishingUpdated((cur, prev, cid, time) => events.${modelClass}Updated(cur, prev, ${pkFieldForCreated} cid, time))
 		    }
-		}
+		  }
 		"""
 
-
-
+		twoQueryUpsert + "\n" + fastUpsert
 	}
 
 	def buildUniqueExistanceCode(table: Table, key: UniqueKey, modelClass: String): String = {
