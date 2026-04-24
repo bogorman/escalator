@@ -750,7 +750,7 @@ object Base${aggregateName}State {
   private case class Empty${aggregateName}State(
       ${rootEntityFieldName}Id: ${aggregateName}Id,
       version: Long = 0L,
-      lastUpdated: Timestamp = new Timestamp(System.currentTimeMillis())
+      lastUpdated: Timestamp = Timestamp.now()
   ) extends Base${aggregateName}State {
     def applyEvent(event: Event): Base${aggregateName}State = this
   }
