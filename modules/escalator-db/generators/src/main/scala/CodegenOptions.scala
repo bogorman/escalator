@@ -54,6 +54,9 @@ case class CodegenOptions(
     maxAggregateDepth: Int = 3,
     generatePekkoActors: Boolean = false, // When true with generateAggregates=false, generates standalone actors
     aggregateBoundaryHints: Map[String, Boolean] = Map.empty,
+    // Tables where actor state stores full objects instead of just IDs
+    // e.g. List("message_actions") generates List[MessageAction] instead of List[MessageActionId]
+    storeFullObjectTables: List[String] = List.empty,
     // Cache generation options
     generateCaches: Boolean = false // When true, generates CachedOperations mixin and cache wrappers on table DAOs
 )
