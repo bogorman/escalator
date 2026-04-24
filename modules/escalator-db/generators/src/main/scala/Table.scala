@@ -192,8 +192,8 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)})").getOrElse("")
 
-    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp(0L)").getOrElse("")
-    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp(0L)").getOrElse("")
+    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp.fromNanos(0L)").getOrElse("")
+    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp.fromNanos(0L)").getOrElse("")
 
     val objectClass = if (inheritedFromTable.isDefined){
       val inheritedRequiredColumns = requiredColumns.filter { c => c.inheritedFromColumn.isDefined }

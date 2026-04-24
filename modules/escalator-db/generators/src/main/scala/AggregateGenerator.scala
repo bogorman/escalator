@@ -223,7 +223,7 @@ import ${options.packageName}.models._
 case class Base${aggregateName}State(
   ${rootEntityFieldName}: Option[${aggregateName}] = None${fieldsString}
   version: Long = 0L,
-  lastUpdated: Timestamp = Timestamp(0L)
+  lastUpdated: Timestamp = Timestamp.fromNanos(0L)
 ) {
   /**
    * Apply an event to update the aggregate state
@@ -239,7 +239,7 @@ object Base${aggregateName}State {
     Base${aggregateName}State(
       ${rootEntityFieldName} = None,
       version = 0L,
-      lastUpdated = Timestamp(0L)
+      lastUpdated = Timestamp.fromNanos(0L)
     )
   }
 }

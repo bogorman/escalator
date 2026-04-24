@@ -13,8 +13,8 @@ class TimestampProvider(implicit clock: Clock) {
     val last = lastTimestamp.get()
 
     if (now > last && lastTimestamp.compareAndSet(last, now))
-      Timestamp(now)
+      Timestamp.fromNanos(now)
     else
-      Timestamp(lastTimestamp.incrementAndGet())
+      Timestamp.fromNanos(lastTimestamp.incrementAndGet())
   }
 }

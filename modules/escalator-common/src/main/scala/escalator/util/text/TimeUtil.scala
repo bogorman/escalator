@@ -45,8 +45,7 @@ object TimeUtil {
   // }  
 
   def nowTimestamp(): Timestamp = {
-    val now = Clock.systemUTC().millis() * 1000000L
-    Timestamp(now)
-  }  
+    Timestamp.fromMillis(Clock.systemUTC().millis())
+  }
 
 }

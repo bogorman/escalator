@@ -10,7 +10,7 @@ import io.getquill.MappedEncoding
 trait PostgresCommonMappedEncoder {
 
 	def dateToTimestamp(dt: java.time.LocalDateTime): Timestamp = {
-		Timestamp( DateTimeConverter.localDateTimeToEpochNano(dt) )
+		Timestamp.fromNanos( DateTimeConverter.localDateTimeToEpochNano(dt) )
 	}
 
 	def timestampToDate(t: Timestamp): java.time.LocalDateTime = {

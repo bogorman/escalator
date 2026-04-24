@@ -972,7 +972,8 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         |
         |object ModelSerializers {
         |
-        |  implicit val codecTimestamp: Codec.AsObject[escalator.util.Timestamp] = deriveCodec[escalator.util.Timestamp]
+        |  // codecTimestamp is defined in escalator.util.Timestamp's companion so it's
+        |  // visible to any auto-derivation without a special import.
         |  implicit val codecCorrelationId: Codec.AsObject[escalator.models.CorrelationId] = deriveCodec[escalator.models.CorrelationId]
         |
         |  ${modelTypeSerializers.mkString("\n|  ")}
