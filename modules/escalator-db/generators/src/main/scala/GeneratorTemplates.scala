@@ -523,7 +523,9 @@ object GeneratorTemplates {
 
 		  import PostgresMappedEncoder._
 
-		  import monix.execution.Scheduler.Implicits.global
+		  // TracingScheduler so Quill's `Local[currentConnection]` is per-Task
+		  // not per-thread — see EscalatorScheduler doc for the bug it prevents.
+		  import escalator.util.monix.EscalatorScheduler.scheduler
 		  import ctx._
 
 		  ${customGen.customMappers(tableClass)}
@@ -617,7 +619,9 @@ object GeneratorTemplates {
 		  // This class inherits all standard CRUD operations from Postgres${tableClass}
 
 		  import PostgresMappedEncoder._
-		  import monix.execution.Scheduler.Implicits.global
+		  // TracingScheduler so Quill's `Local[currentConnection]` is per-Task
+		  // not per-thread — see EscalatorScheduler doc for the bug it prevents.
+		  import escalator.util.monix.EscalatorScheduler.scheduler
 		  import ctx._
 		  
 		}
