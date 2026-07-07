@@ -39,8 +39,12 @@ object ReferenceTreeBuilder {
       val refs = ConnectionUtils.getReferences(db, tableName, "id")
 
       refs.flatMap { ref =>
+        // Excluded tables (hand-written models) must not enter the aggregate:
+        // their generated state/event/actor references wouldn't compile.
+        if (options.excludedTables.contains(ref.fromTableName)) {
+          None
         // Stop traversal at other aggregate boundaries (unless it's depth 0, i.e., the root)
-        if (depth > 0 && isLikelyAggregateRoot(ref.fromTableName)) {
+        } else if (depth > 0 && isLikelyAggregateRoot(ref.fromTableName)) {
           // Just store the ID reference, don't traverse deeper
           Some(ReferenceNode(
             table = ref.fromTableName,
