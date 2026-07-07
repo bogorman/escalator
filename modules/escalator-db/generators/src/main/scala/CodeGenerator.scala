@@ -184,6 +184,63 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     System.err.println(s"[${Console.YELLOW}warn${Console.RESET}] $msg")
   }
 
+  /**
+   * Fail fast, with one aggregated report, when a table violates the schema
+   * conventions the generated code assumes. Each of these otherwise surfaces
+   * far from the cause: an obscure crash during generation (unique key over a
+   * silently-dropped unmapped column), a compile error in generated code
+   * (missing id / nullable timestamps / id not first), or — worst — SQL that
+   * only fails at runtime (column names that don't survive the naming
+   * strategy's snake_case round-trip, e.g. change_24h vs change24h).
+   */
+  def validateSchemaConventions(db: Connection, tables: List[String]): Unit = {
+    val mappings = TypeMapper.mappings(customGen)
+
+    val violations = tables.sorted.flatMap { name =>
+      val cols = results(db.getMetaData.getColumns(null, options.schema, name, null)).map { row =>
+        (row.getString(COLUMN_NAME), row.getString(TYPE_NAME), row.getInt("ORDINAL_POSITION"), row.getString("IS_NULLABLE"))
+      }.toList
+      val byName = cols.map(c => c._1 -> c).toMap
+
+      val idIssues = byName.get("id") match {
+        case None =>
+          List(s"$name: missing `id` column — generated persistence does returningGenerated(_.id)")
+        case Some((_, _, pos, _)) if pos != 1 =>
+          List(s"$name: `id` must be the FIRST column (is #$pos) — generated model companions assume id-first ordering; rebuild the table (see V065__Profile_read_states_rebuild_column_order)")
+        case _ => Nil
+      }
+
+      val tsIssues = List("created_at", "updated_at").flatMap { ts =>
+        byName.get(ts) match {
+          case None =>
+            List(s"$name: missing `$ts` — generated code writes the created_at/updated_at pair")
+          case Some((_, _, _, nullable)) if nullable != "NO" =>
+            List(s"$name: `$ts` must be NOT NULL — nullable timestamps break the generated model companion")
+          case _ => Nil
+        }
+      }
+
+      val typeIssues = cols.collect {
+        case (col, typ, _, _) if !mappings.contains(typ) =>
+          s"$name.$col: no Scala mapping for PG type `$typ` — add it to the CustomGenerator customMappings (unmapped columns are silently dropped, and crash generation when a unique key references them)"
+      }
+
+      val nameIssues = cols.collect {
+        case (col, _, _, _) if col.matches(".*_\\d.*") =>
+          s"$name.$col: underscore before a digit does not survive the SnakeCase naming strategy round-trip — generated queries would reference `${col.replaceAll("_(?=\\d)", "")}`; rename the column"
+      }
+
+      idIssues ++ tsIssues ++ typeIssues ++ nameIssues
+    }
+
+    if (violations.nonEmpty) {
+      throw new Exception(
+        "Schema convention violations — fix the schema, or add the table to excludedTables if it is pure infrastructure:" +
+          violations.mkString("\n  - ", "\n  - ", "")
+      )
+    }
+  }
+
   def getTables(db: Connection, foreignKeys: Set[ForeignKey]): Seq[Table] = {
     val abstractTables = ConnectionUtils.getAbstractTables(db)
     val inheritedTables = ConnectionUtils.getInheritedTables(db)    
@@ -212,6 +269,8 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val tables = ((abstractTables ++ inheritedTables ++ metaTables).distinct diff excludedTables).filterNot(partitions).toList
 
     // println("tables:" + tables)
+
+    validateSchemaConventions(db, tables)
 
     val result = tables.flatMap { name => 
       // val name = row.getString(TABLE_NAME)
