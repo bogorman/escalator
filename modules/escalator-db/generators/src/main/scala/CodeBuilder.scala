@@ -798,8 +798,20 @@ object CodeBuilder {
 		} else {
 			foreignKeyColumns.map { col =>
 				val foreignTable = col.references.get.tableName
-				val foreignKeyType = if (col.columnName.endsWith("_id")) {
-					// This is a foreign key column, use the proper ID type
+				// The `_id` fast path is only correct when the FK actually targets the
+				// parent's PRIMARY KEY, which is the shape of virtually every `*_id`
+				// FK: the referenced column is `id`, whose own type IS
+				// `<Parent>Id`, so both branches agree. It is WRONG when an `_id`
+				// column references some other unique column — e.g.
+				// `sim_layers.base_pack_id -> sim_packs(pack_id)`, where the model
+				// field is correctly typed `SimPackPackId` (derived from the
+				// referenced column) while this produced `SimPackId`, and the
+				// generated finder then compared two different value classes and
+				// failed to compile. Deriving from the REFERENCED COLUMN is the
+				// general rule; the fast path is kept only where it is provably
+				// identical.
+				val foreignKeyType = if (col.columnName.endsWith("_id") && col.references.get.columnName == "id") {
+					// Targets the parent's primary key: `<Parent>Id`.
 					namingStrategy.table(foreignTable) + "Id"
 				} else {
 					// This column references another table but isn't a typical _id column
