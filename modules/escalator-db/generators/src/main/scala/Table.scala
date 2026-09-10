@@ -36,7 +36,8 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   def columnCaseClasses(): List[String] = {
     val caseClasses = tableColumns.filter(_.shouldDefineType).map { col =>
       // println("shouldDefineType:" + name + ":" + col.columnName + " " + col.toDefn(name, true))
-      val cc = s"""case class ${col.toDefn(name, true)}(${col.toArg(namingStrategy, name, false)}) extends AnyVal"""
+      val valueClass = if (col.scalaType == "escalator.util.Timestamp") "" else " extends AnyVal"
+      val cc = s"""case class ${col.toDefn(name, true)}(${col.toArg(namingStrategy, name, false)})$valueClass"""
       // println(cc)
       cc
     }
@@ -169,13 +170,16 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
   def mainObjectClass(): String = {
     val scalaName = namingStrategy.table(name)
 
-    val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey && !c.isExtraColumn }
-    val requiredColumns = tableColumns.filter { c => !c.isPrimaryKey && !c.isAutoColumn  && !c.isExtraColumn }
+    // Only the conventional generated id has a placeholder constructor value.
+    // Natural/composite keys must be supplied by the caller.
+    val primaryKeyColumns = tableColumns.filter { c => c.isPrimaryKey && c.columnName == "id" && !c.isExtraColumn }
+    val requiredColumns = tableColumns.filter { c => (!c.isPrimaryKey || c.columnName != "id") && !c.isAutoColumn && !c.isExtraColumn }
 
     val autoColumns = tableColumns.filter { c => c.isAutoColumn && !c.isExtraColumn }
 
     val extraDefaultColumns = tableColumns.filter { c => c.isExtraColumn }
 
+    val constructorPrefix = if (primaryKeyColumns.isEmpty) "new " else ""
     val primaryKeyColumnOpt: Option[Column] = primaryKeyColumns.headOption
 
     val primaryKeyColArgOpt: Option[String] = primaryKeyColumnOpt.map { col => col.toDefn(col.tableName, true) }
@@ -216,7 +220,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       s"""object $scalaName {
 
         def apply(${objectArgs}): ${scalaName} = {
-          ${scalaName}(
+          ${constructorPrefix}${scalaName}(
             ${appendIfNotEmpty(primaryColCreator,",")}
             ${appendIfNotEmpty(objClassInheritedArgsWithDefaults,",")}
             ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}
@@ -241,7 +245,7 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
       s"""object $scalaName {
 
         def apply(${objectArgs}): ${scalaName} = {
-          ${scalaName}(
+          ${constructorPrefix}${scalaName}(
             ${appendIfNotEmpty(primaryColCreator,",")}
             ${appendIfNotEmpty(objClassArgsWithDefaults,",")}
             ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}

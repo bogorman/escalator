@@ -27,6 +27,7 @@ object TypeMapper {
     "_varchar" -> "List[String]", //?????
     "Vector(_varchar)" -> "List[String]",
     "timestamp" -> "escalator.util.Timestamp",
+    "timestamptz" -> "escalator.util.Timestamp",
     "date" -> "escalator.util.Timestamp",
 
     //

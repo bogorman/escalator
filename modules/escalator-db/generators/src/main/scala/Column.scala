@@ -34,7 +34,8 @@ case class Column(customGen: CustomGenerator,
                   references: Option[SimpleColumn],
                   incomingReferences: List[SimpleColumn],
                   inheritedFromTable: Option[Table] = None,
-                  inheritedFromColumn: Option[Column] = None,                  
+                  inheritedFromColumn: Option[Column] = None,
+                  compositeKey: Boolean = false,                  
                 ) {
   import TextUtil._
   val namingStrategy = GeneratorNamingStrategy
@@ -110,7 +111,7 @@ case class Column(customGen: CustomGenerator,
 
   def shouldTypeifyColumn() = {
     // columnName == "id"
-    (isPrimaryKey || hasUniqueKey) && references.isEmpty
+    ((isPrimaryKey && (!compositeKey || columnName == "id")) || hasUniqueKey) && references.isEmpty && scalaType != "escalator.util.Timestamp"
   }
 
   def hasSpecificType() = {

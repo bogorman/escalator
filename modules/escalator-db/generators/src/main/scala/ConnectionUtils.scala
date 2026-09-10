@@ -39,6 +39,7 @@ object ConnectionUtils {
           JOIN pg_class child             ON pg_inherits.inhrelid   = child.oid
           JOIN pg_namespace nmsp_parent   ON nmsp_parent.oid  = parent.relnamespace
           JOIN pg_namespace nmsp_child    ON nmsp_child.oid   = child.relnamespace
+          WHERE NOT child.relispartition AND parent.relkind <> 'p'
     )
     select distinct(parent) from inherited
     """
@@ -59,6 +60,7 @@ object ConnectionUtils {
           JOIN pg_class child             ON pg_inherits.inhrelid   = child.oid
           JOIN pg_namespace nmsp_parent   ON nmsp_parent.oid  = parent.relnamespace
           JOIN pg_namespace nmsp_child    ON nmsp_child.oid   = child.relnamespace
+          WHERE NOT child.relispartition AND parent.relkind <> 'p'
     )
     select distinct(child) from inherited
     """
@@ -76,6 +78,7 @@ object ConnectionUtils {
           JOIN pg_class child             ON pg_inherits.inhrelid   = child.oid
           JOIN pg_namespace nmsp_parent   ON nmsp_parent.oid  = parent.relnamespace
           JOIN pg_namespace nmsp_child    ON nmsp_child.oid   = child.relnamespace
+          WHERE NOT child.relispartition AND parent.relkind <> 'p'
     """
 
     val stmt = db.createStatement()

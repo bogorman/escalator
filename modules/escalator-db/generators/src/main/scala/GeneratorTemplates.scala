@@ -120,7 +120,8 @@ object GeneratorTemplates {
 		true
 	}
 
-	def tableTraitTemplate(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String) = {
+	def tableTraitTemplate(table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String): String = {
+        if (KeyedTableTemplates.applies(table)) return KeyedTableTemplates.tableTrait(table, packageSpace, modelClass, tableClass)
 		val initial = modelClass.take(1).toLowerCase
 		val primaryKeyClass: Option[String] = table.primaryKeyClass		//s"${modelClass}Id"
 
@@ -213,7 +214,8 @@ object GeneratorTemplates {
 		"""
 	}
 
-	def tableDaoTemplate(customGen: CustomGenerator, table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String, generateCaches: Boolean = false) = {
+	def tableDaoTemplate(customGen: CustomGenerator, table: Table, packageSpace: String, modelClass: String, tableName: String, tableClass: String, generateCaches: Boolean = false): String = {
+        if (KeyedTableTemplates.applies(table)) return KeyedTableTemplates.dao(table, packageSpace, modelClass, tableClass)
 		// val package = ""
 		val initial = modelClass.take(1).toLowerCase
 		val primaryKeyClass: Option[String] = table.primaryKeyClass //s"${modelClass}Id"

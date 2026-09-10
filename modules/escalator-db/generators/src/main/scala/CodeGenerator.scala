@@ -193,7 +193,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     // println("inheritedTables:" + inheritedTables)
     // println("inheritedTablesMappings:" + inheritedTablesMappings)
 
-    val rs: ResultSet = db.getMetaData.getTables(null, options.schema, "%", Array("TABLE"))
+    val rs: ResultSet = db.getMetaData.getTables(null, options.schema, "%", Array("TABLE", "PARTITIONED TABLE"))
 
     val metaTables = MList.empty[String]
     val tablesLookup = MMap.empty[String, Table]
@@ -204,7 +204,12 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       metaTables += name
     }
 
-    val tables = ((abstractTables ++ inheritedTables ++ metaTables).distinct diff excludedTables).toList
+    // Physical partitions implement one parent entity; they are not independent models.
+    val partitionStatement=db.prepareStatement("SELECT relname FROM pg_class WHERE relispartition AND relnamespace=to_regnamespace(?)")
+    partitionStatement.setString(1,options.schema)
+    val partitionRows=partitionStatement.executeQuery()
+    val partitions=try results(partitionRows).map(_.getString(1)).toSet finally { partitionRows.close(); partitionStatement.close() }
+    val tables = ((abstractTables ++ inheritedTables ++ metaTables).distinct diff excludedTables).filterNot(partitions).toList
 
     // println("tables:" + tables)
 
@@ -235,7 +240,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
         val unmappedColumns = columns.filter(_.isLeft).map(_.left.get)
 
         if (unmappedColumns.nonEmpty) {
-          warn(s"The following columns from table $name need a mapping: $unmappedColumns")
+          throw new IllegalArgumentException(s"Cannot generate $name: unmapped columns $unmappedColumns. Add a type mapping; columns must never be silently omitted.")
         }        
 
         val t = Table(
@@ -312,23 +317,44 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
           ref,
           incomingRefs,
           inheritedFromTable,
-          inheritedFromColumn
+          inheritedFromColumn,
+          compositeKey = primaryKeys.size > 1
         ))
       }.getOrElse(Left(typ))
     }.toVector
   }
 
+  /** Logical identity: prefer the declared PK, otherwise an enforced, total
+    * unique key. Partitioned parents may use an attached unique index without
+    * a PK constraint. Never infer identity from an arbitrary `id` column.
+    */
   def getPrimaryKeys(db: Connection, tableName: String): Set[String] = {
-    val sb = Set.newBuilder[String]
-    val primaryKeys = db.getMetaData.getPrimaryKeys(null, null, tableName)
-    while (primaryKeys.next()) {
-      sb += primaryKeys.getString(COLUMN_NAME)
+    val rows = db.getMetaData.getPrimaryKeys(null, options.schema, tableName)
+    val declared = try results(rows).map(_.getString(COLUMN_NAME)).toSet finally rows.close()
+    if (declared.nonEmpty) declared else {
+      val statement=db.prepareStatement("""
+        SELECT string_agg(a.attname, chr(9) ORDER BY k.ordinality)
+        FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+        JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
+        WHERE i.indrelid=to_regclass(?) AND i.indisunique AND i.indisvalid
+          AND i.indpred IS NULL AND i.indexprs IS NULL AND k.ordinality<=i.indnkeyatts
+        GROUP BY i.indexrelid,i.indnkeyatts
+        HAVING bool_and(a.attnotnull) AND count(*)=i.indnkeyatts
+        ORDER BY bool_or(a.attname='id') DESC,count(*),i.indexrelid LIMIT 1
+      """)
+      try {
+        statement.setString(1, options.schema+"."+tableName)
+        val keys=statement.executeQuery()
+        try {
+          if (keys.next()) keys.getString(1).split("\t").toSet
+          else throw new IllegalArgumentException(s"Cannot generate $tableName: no primary or non-null unique key")
+        } finally keys.close()
+      } finally statement.close()
     }
-    sb.result()
   }
 
   def getUniqueKeys(db: Connection, tableName: String): Set[UniqueKey] = {
-    val uniqueKeys = db.getMetaData.getIndexInfo(null, null, tableName, true, false)
+    val uniqueKeys = db.getMetaData.getIndexInfo(null, options.schema, tableName, true, false)
 
     // println("getUniqueKeys: " + tableName)
     val indices = results(uniqueKeys).map { row =>
@@ -847,7 +873,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val allTypeClasses = scala.collection.mutable.ListBuffer[String]()
     val allTypeObjects = scala.collection.mutable.ListBuffer[String]()
     
-    attributeTypeMap.foreach { case (attrCategory, values) =>
+    attributeTypeMap.toList.sortBy(_._1).foreach { case (attrCategory, values) =>
       val baseName = TextUtil.snakeToUpperCamel(attrCategory.toLowerCase.replace("_", "_"))
       val className = if (baseName.endsWith("Type")) baseName else baseName + "Type"
       val scalaClassName = className.capitalize
@@ -860,7 +886,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       allTypeClasses += caseClassDef
       
       // Build object with constants
-      val constants = values.map { value =>
+      val constants = values.sortBy(_.ident).map { value =>
         // val constantName = TextUtil.snakeToUpperCamel(value.ident.replace("-", "_"))
         s"  val ${formatConstantName(scalaClassName,value.ident)} = ${scalaClassName}(\"${value.ident}\")"
       }.mkString("\n")
