@@ -343,7 +343,7 @@ class DbPruner(options: CodegenOptions, customGen: CustomGenerator) {
           // Write pruned block
           result.append(s"${PRUNED_START} ${method.name}\n")
           for (j <- method.startLine to method.endLine) {
-            result.append(s"// ${lines(j)}\n")
+            result.append(if (lines(j).trim.isEmpty) "\n" else s"// ${lines(j)}\n")
           }
           result.append(s"${PRUNED_END} ${method.name}\n")
           i = method.endLine + 1

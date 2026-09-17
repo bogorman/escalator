@@ -859,8 +859,11 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     val fc = constant.replaceAll("-", "_").replaceAll(" ","").replaceAll("&","_")
     if (fc.headOption.exists(_.isDigit)){
       s"${scalaClassName}${fc}"
-    } else {
+    } else if (fc.matches("[A-Za-z_$][A-Za-z0-9_$]*")) {
       fc
+    } else {
+      require(!fc.contains('`') && !fc.exists(_.isControl), s"Unsupported attribute identifier: $constant")
+      s"`$fc`"
     }
   }
   
@@ -1400,5 +1403,4 @@ object CodeGenerator {
   //   }
   // }
 }
-
 
