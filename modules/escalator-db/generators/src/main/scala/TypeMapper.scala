@@ -8,6 +8,8 @@ object TypeMapper {
 
     "float8" -> "Double",
     "numeric" -> "BigDecimal",
+    "int2" -> "Short",
+    "_int2" -> "List[Short]",
     "int4" -> "Int",
     "_int4" -> "List[Int]",
     "int8" -> "Long",
@@ -44,4 +46,3 @@ object TypeMapper {
   }
 
 }
-
