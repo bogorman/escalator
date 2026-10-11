@@ -189,7 +189,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
    * conventions the generated code assumes. Each of these otherwise surfaces
    * far from the cause: an obscure crash during generation (unique key over a
    * silently-dropped unmapped column), a compile error in generated code
-   * (missing id / nullable timestamps / id not first), or — worst — SQL that
+   * (nullable timestamps), or — worst — SQL that
    * only fails at runtime (column names that don't survive the naming
    * strategy's snake_case round-trip, e.g. change_24h vs change24h).
    */
@@ -202,18 +202,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
       }.toList
       val byName = cols.map(c => c._1 -> c).toMap
 
-      val idIssues = byName.get("id") match {
-        case None =>
-          List(s"$name: missing `id` column — generated persistence does returningGenerated(_.id)")
-        case Some((_, _, pos, _)) if pos != 1 =>
-          List(s"$name: `id` must be the FIRST column (is #$pos) — generated model companions assume id-first ordering; rebuild the table (see V065__Profile_read_states_rebuild_column_order)")
-        case _ => Nil
-      }
-
+      // Tables without `id`, with `id` in any position, or without timestamps are handled
+      // (KeyedTableTemplates / column-order companions), so only nullable timestamps are checked.
       val tsIssues = List("created_at", "updated_at").flatMap { ts =>
         byName.get(ts) match {
-          case None =>
-            List(s"$name: missing `$ts` — generated code writes the created_at/updated_at pair")
           case Some((_, _, _, nullable)) if nullable != "NO" =>
             List(s"$name: `$ts` must be NOT NULL — nullable timestamps break the generated model companion")
           case _ => Nil
@@ -230,7 +222,7 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
           s"$name.$col: underscore before a digit does not survive the SnakeCase naming strategy round-trip — generated queries would reference `${col.replaceAll("_(?=\\d)", "")}`; rename the column"
       }
 
-      idIssues ++ tsIssues ++ typeIssues ++ nameIssues
+      tsIssues ++ typeIssues ++ nameIssues
     }
 
     if (violations.nonEmpty) {
