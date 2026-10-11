@@ -52,7 +52,6 @@ class SendGridMailer extends EscalatorMailer {
       // false
       EscalatorMailResult(false,None)
     } else {
-      println("apiKey:" + apiKey)
 
       val sg = new SendGrid(apiKey)
       val request = new com.sendgrid.Request();
