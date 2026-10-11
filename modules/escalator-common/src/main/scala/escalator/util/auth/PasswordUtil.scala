@@ -17,14 +17,10 @@ object PasswordUtil {
     if (TextUtil.blank_?(hashed)) {
       false
     } else {
-      // println("password:" + password)
-      // println("hashed:" + hashed)
-      if (password == hashed) {//should not happen! remove for real life
-        true
-      } else {
-        val pepperedPass = s"$password$pepper"
-        org.mindrot.jbcrypt.BCrypt.checkpw(pepperedPass, hashed)
-      }
+      // A stored value that is not a bcrypt hash (e.g. a plaintext seed) never matches.
+      val pepperedPass = s"$password$pepper"
+      try org.mindrot.jbcrypt.BCrypt.checkpw(pepperedPass, hashed)
+      catch { case _: IllegalArgumentException => false }
     }
   }
 
