@@ -755,7 +755,28 @@ ${allObjects}
 """
 	}
 
-	def postgresCustomEncoderTemplate(packageName: String, attributeTypes: List[String]): String = {
+	/** Codecs for TypeMapper.needsCodec types, emitted only when a column uses them. */
+	def extraTypeCodecs(inUse: Set[String]): String = {
+		val uuids = if (inUse(TypeMapper.UuidList)) Some(
+			s"""  protected lazy implicit val uuidListDecoder: ctx.Decoder[${TypeMapper.UuidList}] =
+    ctx.arrayRawDecoder[java.util.UUID, ${TypeMapper.UuidList}]
+  protected lazy implicit val uuidListEncoder: ctx.Encoder[${TypeMapper.UuidList}] =
+    ctx.arrayRawEncoder[java.util.UUID, ${TypeMapper.UuidList}]("uuid")""") else None
+		val tsvector = if (inUse(TypeMapper.TsVector)) Some(
+			s"""  // Text form in and out, so a row read and written back keeps its vector exactly.
+  protected lazy implicit val tsVectorDecoder: ctx.Decoder[${TypeMapper.TsVector}] =
+    ctx.decoder((index, row, session) => ${TypeMapper.TsVector}(row.getString(index)))
+  protected lazy implicit val tsVectorEncoder: ctx.Encoder[${TypeMapper.TsVector}] =
+    ctx.encoder(java.sql.Types.OTHER, (index, value, row) => {
+      val pgObj = new org.postgresql.util.PGobject()
+      pgObj.setType("tsvector")
+      pgObj.setValue(value.value)
+      row.setObject(index, pgObj, java.sql.Types.OTHER)
+    })""") else None
+		List(uuids, tsvector).flatten.mkString("\n\n")
+	}
+
+	def postgresCustomEncoderTemplate(packageName: String, attributeTypes: List[String], inUse: Set[String] = Set.empty): String = {
 		val encoderDecoders = attributeTypes.map { attrType =>
 			val lowerName = attrType.toLowerCase.replace("type", "")
 			s"""  protected lazy implicit val ${lowerName}Decoder: ctx.Decoder[${attrType}] = createAttributeTypeDecoder(${attrType}.apply)
@@ -772,6 +793,8 @@ import ${packageName}.common.persistence.postgres.PostgresCommonEncoder
 trait PostgresDbTypesEncoder extends PostgresCommonEncoder {
 
 ${encoderDecoders}
+
+${extraTypeCodecs(inUse)}
 
 }
 """

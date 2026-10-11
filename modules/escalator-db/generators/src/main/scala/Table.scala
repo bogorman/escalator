@@ -196,66 +196,28 @@ case class Table(customGen: CustomGenerator,options: CodegenOptions,name: String
 
     val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)})").getOrElse("")
 
-    val autoInsertedAtCreator = autoColumns.find(c => c.columnName == "created_at").map(c => s"escalator.util.Timestamp.fromNanos(0L)").getOrElse("")
-    val autoUpdatedAtCreator = autoColumns.find(c => c.columnName == "updated_at").map(c => s"escalator.util.Timestamp.fromNanos(0L)").getOrElse("")
 
-    val objectClass = if (inheritedFromTable.isDefined){
-      val inheritedRequiredColumns = requiredColumns.filter { c => c.inheritedFromColumn.isDefined }
+    // The case class follows the table's column order, which needn't start with `id` or end with the
+    // timestamps (a key added by ALTER TABLE lands last), so build it in that order with named arguments.
+    val constructorArgs = tableColumns.map { col =>
+      val field = namingStrategy.column(col.columnName)
+      val value =
+        if (primaryKeyColumnOpt.contains(col)) primaryColCreator
+        else if (col.isAutoColumn && !col.isExtraColumn) "escalator.util.Timestamp.fromNanos(0L)"
+        else field
+      s"$field = $value"
+    }.mkString(",\n            ")
 
-      val objClassInheritedArgsWithDefaults = inheritedRequiredColumns.map { col =>
-        namingStrategy.column(col.columnName)
-      }.mkString(", ")  
-
-
-      val objClassExtraColsArgsWithDefaults = extraDefaultColumns.map { col =>
-        namingStrategy.column(col.columnName)
-      }.mkString(", ")         
-
-      val directRequiredColumns = requiredColumns.filter { c => !c.inheritedFromColumn.isDefined }
-
-      val objClassDirectArgsWithDefaults = directRequiredColumns.map { col =>
-        namingStrategy.column(col.columnName)
-      }.mkString(", ")        
-
+    val objectClass =
       s"""object $scalaName {
 
         def apply(${objectArgs}): ${scalaName} = {
           ${constructorPrefix}${scalaName}(
-            ${appendIfNotEmpty(primaryColCreator,",")}
-            ${appendIfNotEmpty(objClassInheritedArgsWithDefaults,",")}
-            ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}
-            ${appendIfNotEmpty(objClassDirectArgsWithDefaults,",")}
-            ${appendIfNotEmpty(autoInsertedAtCreator,",")}
-            ${appendIfNotEmpty(autoUpdatedAtCreator,",")}
+            ${constructorArgs}
           )
         }
       }
       """
-    } else {
-      val objClassArgsWithDefaults = requiredColumns.map { col =>
-        namingStrategy.column(col.columnName)
-      }.mkString(", ")  
-
-      val objClassExtraColsArgsWithDefaults = extraDefaultColumns.map { col =>
-        namingStrategy.column(col.columnName)
-      }.mkString(", ")        
-
-      val primaryColCreator = primaryKeyColArgOpt.map(primaryKeyColArg =>  s"${primaryKeyColArg}(${defaultConstructorValue(primaryKeyColumnOpt.get)})").getOrElse("")
-
-      s"""object $scalaName {
-
-        def apply(${objectArgs}): ${scalaName} = {
-          ${constructorPrefix}${scalaName}(
-            ${appendIfNotEmpty(primaryColCreator,",")}
-            ${appendIfNotEmpty(objClassArgsWithDefaults,",")}
-            ${appendIfNotEmpty(objClassExtraColsArgsWithDefaults,",")}
-            ${appendIfNotEmpty(autoInsertedAtCreator,",")}
-            ${appendIfNotEmpty(autoUpdatedAtCreator,",")} 
-          )
-        }
-      }
-      """
-    }
     objectClass
   }
 

@@ -14,8 +14,12 @@ object KeyedTableTemplates {
     val f=field(c); s"r.$f == lift($from$f)"
   }.mkString(" && ")
 
+  // A key on a column called `key` would generate a second getByKey: when it is the primary key itself,
+  // getByKey/upsert already cover it; otherwise its methods are named ...KeyColumn.
   private def unique(t: Table) = t.uniqueKeys.filterNot(_.partial).toList.sortBy(_.keyName).distinctBy(_.cols)
-  private def uniqueName(k: UniqueKey) = k.cols.map(c=>GeneratorNamingStrategy.table(c.columnName)).mkString
+    .filterNot(k => rawName(k) == "Key" && k.cols.map(_.columnName) == keys(t).map(_.columnName))
+  private def rawName(k: UniqueKey) = k.cols.map(c=>GeneratorNamingStrategy.table(c.columnName)).mkString
+  private def uniqueName(k: UniqueKey) = if (rawName(k) == "Key") "KeyColumn" else rawName(k)
   private def uniqueColumns(t: Table,k: UniqueKey) = k.cols.map(c=>t.tableColumns.find(_.columnName==c.columnName).get)
   private def uniqueParams(t: Table,k: UniqueKey) = uniqueColumns(t,k).map(_.toArg(GeneratorNamingStrategy,t.name,true)).mkString(", ")
   private def uniqueWhere(t: Table,k: UniqueKey,prefix: String) = uniqueColumns(t,k).map(c=>s"r.${field(c)} == lift($prefix${field(c)})").mkString(" && ")

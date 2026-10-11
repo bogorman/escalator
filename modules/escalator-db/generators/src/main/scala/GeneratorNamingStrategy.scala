@@ -15,8 +15,9 @@ trait GeneratorNamingStrategy extends NamingStrategy {
   override def column(s: String): String = {
     val c = snakeToLowerCamel(s)
     // println(s"NS column: ${s} -> ${c}")
-    c    
-  }  
+    // A column called `type` (or any Scala keyword) becomes a backticked field; Quill still maps it to the column.
+    if (GeneratorNamingStrategy.ScalaKeywords(c)) s"`$c`" else c
+  }
 
   override def table(s: String) = {
     val t = snakeToUpperCamel(singularize(s)) 
@@ -24,4 +25,10 @@ trait GeneratorNamingStrategy extends NamingStrategy {
     t
   }
 }
-object GeneratorNamingStrategy extends GeneratorNamingStrategy
+object GeneratorNamingStrategy extends GeneratorNamingStrategy {
+  val ScalaKeywords: Set[String] = Set(
+    "abstract", "case", "catch", "class", "def", "do", "else", "extends", "false", "final", "finally", "for",
+    "forSome", "if", "implicit", "import", "lazy", "macro", "match", "new", "null", "object", "override",
+    "package", "private", "protected", "return", "sealed", "super", "then", "this", "throw", "trait", "true",
+    "try", "type", "val", "var", "while", "with", "yield", "enum", "export", "given")
+}

@@ -904,7 +904,6 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     // Generate combined files
     generateAllAttributeTypesFile(allTypeClasses.toList)
     generateAllAttributeObjectsFile(allTypeObjects.toList)
-    generatePostgresDbTypesEncoder()
     
     // println(s"Generated ${generatedAttributeTypes.size} AttributeType classes: ${generatedAttributeTypes.mkString(", ")}")
   }
@@ -948,8 +947,10 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     }
   }
   
-  def generatePostgresDbTypesEncoder(): Unit = {
-    val content = GeneratorTemplates.postgresCustomEncoderTemplate(packageName, generatedAttributeTypes)
+  /** Attribute type codecs, plus codecs for the column types Quill lacks (TypeMapper.needsCodec) that `tables` use. */
+  def generatePostgresDbTypesEncoder(tables: Seq[Table]): Unit = {
+    val inUse = tables.flatMap(_.tableColumns.map(_.scalaType)).toSet.intersect(TypeMapper.needsCodec)
+    val content = GeneratorTemplates.postgresCustomEncoderTemplate(packageName, generatedAttributeTypes, inUse)
     val formattedContent = formatCode(content)
     val filePath = s"${options.persistenceBaseFolder}/common/src/main/scala/${packageName.replace('.', '/')}/persistence/postgres/PostgresDbTypesEncoder.scala"
     
@@ -1082,6 +1083,8 @@ case class CodeGenerator(options: CodegenOptions, namingStrategy: NamingStrategy
     }
 
     val tables = allTables.filter { _.name != "attributes" }.toList
+
+    generatePostgresDbTypesEncoder(tables)
 
     val simpleCaseClasses = generateCaseCasses(tables).toList
 
