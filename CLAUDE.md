@@ -17,6 +17,10 @@ eSCALAtor is a full-stack Scala starter project that has recently migrated from 
 - `modules/escalator-db/generators/`: Database code generation from PostgreSQL schema
 - `modules/escalator-frontend/`: Laminar-based frontend application
 - `modules/escalator-shared-common/`: Models and validators shared between frontend and backend
+- `modules/escalator-web/`: JDBC `Db`, `Crypto`, `Sessions`, `HttpSupport` (cookie auth, CSRF, JSON errors), email `Outbox`, and platform migrations V001–V006 (see its README)
+- `modules/escalator-agent/` + `modules/escalator-agent-protocol/` (cross): multi-provider LLM agent wrapper — Claude CLI/API, Codex, OpenAI; Claude CLI version manager (see its README)
+
+How apps are laid out and the rules they follow: [docs/STARTER_GUIDE.md](docs/STARTER_GUIDE.md). Before copying code from one app to another, check whether it belongs here instead. Tests that need Postgres read `ESCALATOR_TEST_DB` (a throwaway DB), never `DB_NAME`.
 - `modules/escalator-backend/`: Backend application code (currently empty)
 - `modules/escalator-core/`: Core domain logic (currently empty)
 - `modules/escalator-shared/`: Additional shared code (currently empty)

@@ -81,12 +81,11 @@ class AgentEventStoreSpec extends AnyFunSuite with Matchers {
   contract("in-memory", new InMemoryAgentEventStore)
 
   private lazy val jdbcUrl: Option[(String, String, String)] =
-    for {
-      host <- sys.env.get("DB_HOST")
-      port <- sys.env.get("DB_PORT")
-      name <- sys.env.get("DB_NAME")
-      user <- sys.env.get("DB_USER")
-    } yield (s"jdbc:postgresql://$host:$port/$name", user, sys.env.getOrElse("DB_PASSWORD", ""))
+    // ESCALATOR_TEST_DB, never DB_NAME: in an app's source_local.sh that is its dev database.
+    sys.env.get("ESCALATOR_TEST_DB").map { name =>
+      val host = sys.env.getOrElse("DB_HOST", "localhost"); val port = sys.env.getOrElse("DB_PORT", "5432")
+      (s"jdbc:postgresql://$host:$port/$name", sys.env.getOrElse("DB_USER", "postgres"), sys.env.getOrElse("DB_PASSWORD", ""))
+    }
 
   private lazy val jdbcDb: Option[AgentDb] = jdbcUrl.flatMap { case (url, user, pw) =>
     val db = new AgentDb {
@@ -100,5 +99,5 @@ class AgentEventStoreSpec extends AnyFunSuite with Matchers {
   }
 
   if (jdbcDb.isDefined) contract("postgres", new JdbcAgentEventStore(jdbcDb.get))
-  else test("postgres: skipped (no DB env or V020 not applied)")(cancel("no database"))
+  else test("postgres: skipped (set ESCALATOR_TEST_DB to a DB with agent_tables.sql)")(cancel("no database"))
 }

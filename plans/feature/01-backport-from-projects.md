@@ -104,7 +104,15 @@ Learnings for the starter CLAUDE.md are captured in `docs/STARTER_GUIDE.md`.
 
 ## Phases
 
-1. **This branch:** consolidation (done); `escalator-agent-protocol`, `escalator-agent`, `escalator-web` (#1–#9); `docs/STARTER_GUIDE.md`. Verify by building flxify/catchpoll against escalator-agent and a Gen C app against escalator-web.
+1. **This branch — done 2026-10-11:**
+   - **escalator-agent and escalator-agent-protocol** (#1–#3).
+     - Verified by moving flxify onto them in a scratch worktree: full compile, 87 tests including Postgres.
+   - **escalator-web** (#4–#9, plus platform SQL V001–V006).
+     - Verified by moving betblocks onto it: full compile, all betblocks tests, and 15 module tests including Postgres.
+   - `FutureUtils` moved to escalator-common.
+   - `docs/STARTER_GUIDE.md`.
+   - Security fixes: `PasswordUtil` hash-as-password, and SendGrid printing its API key.
+   - DB tests are gated on `ESCALATOR_TEST_DB`. An earlier run used `DB_NAME` and wrote 3 test users and 1 outbox row into `betblocks_dev`; those rows were deleted.
 2. Platform migrations, auth routes, site routes and OG meta, API keys, MCP core, the frontend kit; rebuild `escalator-starter` as a Gen C app on these modules.
 3. Agent chat UI (frontend) + SSE route builder; move betbot, dualdialogue and swotcrm onto escalator-agent.
 4. Adopt in each project: bump the submodule, delete the local copy, compile, test. One project per PR.
