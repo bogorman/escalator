@@ -20,7 +20,7 @@ Companion to `01-backport-from-projects.md`. Scanned 2026-10-11.
 
 ## Suggested order
 
-betblocks → howmany → migratecode → catchpoll → flxify → signoff → lexie → betbot → dualdialogue → investorlab → swotcrm → starter.
+betblocks → howmany → migratecode → catchpoll → flxify → signoff → lexie → betbot → dualdialogue → investorlab → swotcrm → starter. wush is already on the branch (it was built on it).
 
 The first five are near-mechanical. The rest carry generator catch-up or app-specific forks.
 
@@ -109,6 +109,18 @@ The first five are near-mechanical. The rest carry generator catch-up or app-spe
   - Regenerate and fix the call sites.
 - **Passwords:** plaintext `'password'` seeds in V100, and in V103 for `ian.tully@swotlegal.com`. Reseed and **check production**.
 - **Versions:** Scala 2.13.16 → 2.13.17. Agent v1/v2 goes to phase 3.
+
+### wush (`domains/wush`, being ported from Node; worktrees `wush-wt-escalator`, `wush-wt-merge`, `wush-wt-p2`, pin 4aed389)
+- **First native consumer.** It is built straight on `escalator-web` and `escalator-agent` (backend `dependsOn(core, escalatorWeb, escalatorAgent)`) and has no copies of Db, Crypto, Sessions, HttpSupport, Outbox or ClaudeEngine. There is nothing to swap.
+- **Blocked on deploy until this branch is on GitHub.** Coolify can't fetch 4aed389. Wush's plan 13 §1 has a fallback.
+- **Pin moves.** Each escalator commit after 4aed389 means moving the pin in all three worktrees. Keep them on one commit.
+- **Shared later.** It adds one more copy of three pieces that phase 2 should share:
+  - `http/AuthRoutes.scala` (email-code sign-in)
+  - frontend `Api` / `Session` / `Router`
+  - a Catchpoll client (`pipeline/Catchpoll.scala`)
+  
+  When those land, its migration is like betblocks'.
+- **Agent wrapper:** `pipeline/Llm.scala` wraps the agent providers into a one-shot "prompt + JSON schema + tools + cwd" call with progress events. migratecode's `ClaudeCliRunner` does the same job. That makes it a candidate for an `escalator-agent` one-shot API (phase 3).
 
 ### escalator-starter (`ES/escalator-starter`, pin c510902) — rebuild, don't patch (phase 2)
 - **Template:** start from howmany's `project/` set, `escalator-web`, `escalator-agent`, and the platform SQL V001–V006.
